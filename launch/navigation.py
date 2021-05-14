@@ -39,7 +39,7 @@ def generate_launch_description():
                 remappings=[
                     ("~/octomap_in", "/" + UAV_NAME + "/octomap_server/octomap_full"),
                     ("~/odometry_in", "/" + UAV_NAME + "/control_interface/local_odom"),
-                    ("~/waypoints_out", "/waypoints"),
+                    ("~/waypoints_out", "/" + UAV_NAME + "/control_interface/waypoints"),
                 ],
             ),
         ],
