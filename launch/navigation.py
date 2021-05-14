@@ -40,6 +40,7 @@ def generate_launch_description():
                     ("~/octomap_in", "/" + UAV_NAME + "/octomap_server/octomap_full"),
                     ("~/odometry_in", "/" + UAV_NAME + "/control_interface/local_odom"),
                     ("~/waypoints_out", "/" + UAV_NAME + "/control_interface/waypoints"),
+                    ("~/goto_in", "~/goto"),
                 ],
             ),
         ],
