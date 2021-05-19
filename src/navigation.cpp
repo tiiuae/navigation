@@ -16,6 +16,8 @@
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
+#include <fog_msgs/srv/path.hpp>
+
 #include <octomap_msgs/conversions.h>
 #include <octomap_msgs/msg/octomap.hpp>
 #include <octomap_msgs/srv/bounding_box_query.hpp>
@@ -111,11 +113,15 @@ private:
 
   // services provided
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr goto_trigger_service_;
+  rclcpp::Service<fog_msgs::srv::Path>::SharedPtr set_path_service_;
 
   // service callbacks
   bool gotoTriggerCallback(
       const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
       std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+  bool
+  setPathCallback(const std::shared_ptr<fog_msgs::srv::Path::Request> request,
+                  std::shared_ptr<fog_msgs::srv::Path::Response> response);
 
   bool goalReached(const octomap::point3d &goal, double dist_tolerance);
   nav_msgs::msg::Path
@@ -196,6 +202,8 @@ Navigation::Navigation(rclcpp::NodeOptions options)
   goto_trigger_service_ = this->create_service<std_srvs::srv::Trigger>(
       "~/goto_trigger_in",
       std::bind(&Navigation::gotoTriggerCallback, this, _1, _2));
+  set_path_service_ = this->create_service<fog_msgs::srv::Path>(
+      "~/set_path_in", std::bind(&Navigation::setPathCallback, this, _1, _2));
 
   // timers
   execution_timer_ = this->create_wall_timer(
@@ -295,22 +303,56 @@ bool Navigation::gotoTriggerCallback(
     return false;
   }
 
-  /* if (request->goal[2] < min_altitude_) { */
-  /*   RCLCPP_WARN(this->get_logger(), */
-  /*               "[%s]: Goal is below the minimum allowed altitude!", */
-  /*               this->get_name()); */
-  /*   RCLCPP_INFO(this->get_logger(), "[%s]: Goal shifted to altitude %.2f", */
-  /*               this->get_name(), min_altitude_); */
-  /*   ; */
-  /* } */
+  RCLCPP_INFO(this->get_logger(), "[%s]: Mission started", this->get_name());
+  status_ = PLANNING;
 
-  /* current_goal_.x() = request->goal[0]; */
-  /* current_goal_.y() = request->goal[1]; */
-  /* current_goal_.z() = std::max(request->goal[2], min_altitude_); */
+  response->message = "Mission started";
+  response->success = true;
+  return true;
+}
+//}
 
-  /* goal_.x() = request->goal[0]; */
-  /* goal_.y() = request->goal[1]; */
-  /* goal_.z() = std::max(request->goal[2], min_altitude_); */
+/* setPathCallback //{ */
+bool Navigation::setPathCallback(
+    [[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Path::Request>
+        request,
+    std::shared_ptr<fog_msgs::srv::Path::Response> response) {
+  if (!is_initialized_) {
+    response->message = "Goto rejected. Node not initialized";
+    response->success = false;
+    return false;
+  }
+
+  if (!getting_octomap_) {
+    response->message = "Goto rejected. Octomap not received";
+    response->success = false;
+    return false;
+  }
+
+  if (status_ != IDLE) {
+    response->message = "Goto rejected. Vehicle not IDLE";
+    response->success = false;
+    return false;
+  }
+
+  if (request->path.poses.empty()) {
+    response->message =
+        "Goto rejected. Path input does not contain any waypoints";
+    response->success = false;
+    return false;
+  }
+
+  waypoint_in_buffer_.clear();
+  for (const auto &w : request->path.poses) {
+    octomap::point3d point;
+    point.x() = w.pose.position.x;
+    point.y() = w.pose.position.y;
+    point.z() = w.pose.position.z;
+    waypoint_in_buffer_.push_back(point);
+  }
+
+  RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint buffer size: %ld",
+              this->get_name(), waypoint_in_buffer_.size());
 
   RCLCPP_INFO(this->get_logger(), "[%s]: Mission started", this->get_name());
   status_ = PLANNING;

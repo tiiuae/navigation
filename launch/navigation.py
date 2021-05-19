@@ -42,6 +42,7 @@ def generate_launch_description():
                     ("~/waypoints_out", "/" + UAV_NAME + "/control_interface/waypoints"),
                     ("~/goto_in", "~/goto_waypoints"),
                     ("~/goto_trigger_in", "~/goto_start"),
+                    ("~/set_path_in", "~/set_path"),
                 ],
             ),
         ],
