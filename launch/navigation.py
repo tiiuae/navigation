@@ -18,9 +18,9 @@ def generate_launch_description():
     dbg_sub = launch.substitutions.PythonExpression(['"" if "false" == "', launch.substitutions.LaunchConfiguration("debug"), '" else "debug_ros2launch ' + os.ttyname(sys.stdout.fileno()) + '"'])
 
 
-    UAV_NAME=os.getenv('UAV_NAME')
+    DRONE_DEVICE_ID=os.getenv('DRONE_DEVICE_ID')
 
-    namespace=UAV_NAME
+    namespace=DRONE_DEVICE_ID
     ld.add_action(ComposableNodeContainer(
         namespace='',
         name=namespace+'_navigation',
@@ -37,9 +37,9 @@ def generate_launch_description():
                     {"use_sim_time": launch.substitutions.LaunchConfiguration("use_sim_time")},
                 ],
                 remappings=[
-                    ("~/octomap_in", "/" + UAV_NAME + "/octomap_server/octomap_full"),
-                    ("~/odometry_in", "/" + UAV_NAME + "/control_interface/local_odom"),
-                    ("~/waypoints_out", "/" + UAV_NAME + "/control_interface/waypoints"),
+                    ("~/octomap_in", "/" + DRONE_DEVICE_ID + "/octomap_server/octomap_full"),
+                    ("~/odometry_in", "/" + DRONE_DEVICE_ID + "/control_interface/local_odom"),
+                    ("~/waypoints_out", "/" + DRONE_DEVICE_ID + "/control_interface/waypoints"),
                     ("~/goto_in", "~/goto_waypoints"),
                     ("~/goto_trigger_in", "~/goto_start"),
                     ("~/set_path_in", "~/set_path"),

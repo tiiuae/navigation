@@ -2,6 +2,7 @@
 
 ## Debug script for easy waypoint publishing
 
+import os
 import numpy as np
 
 import rclpy
@@ -25,9 +26,12 @@ WAYPOINTS=[
 class PathPublisherNode(Node):
 
     def __init__(self):
+
+        DRONE_DEVICE_ID = os.getenv('DRONE_DEVICE_ID')
+
         super().__init__("waypoint_publisher")
-        self.publisher = self.create_publisher(NavPath, "/uav1/navigation/goto_waypoints", 10)
-        self.client = self.create_client(SetPath, "/uav1/navigation/set_path")
+        self.publisher = self.create_publisher(NavPath, "/" + DRONE_DEVICE_ID + "/navigation/goto_waypoints", 10)
+        self.client = self.create_client(SetPath, "/" + DRONE_DEVICE_ID + "/navigation/set_path")
 
     def publish(self):
         path = Path()
@@ -62,7 +66,7 @@ class PathPublisherNode(Node):
             point.z = float(wp[2])
             pose.pose.position = point
             path.poses.append(pose)
-        print('Calling service with payload: "%s"' % path.poses)
+        print('Calling service : "%s"' % self.client.srv_name)
         path_req = SetPath.Request()
         path_req.path = path
         self.future = self.client.call_async(path_req)
