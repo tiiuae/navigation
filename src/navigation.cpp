@@ -1,32 +1,27 @@
+#include <eigen3/Eigen/Core>
+#include <fog_msgs/srv/vec4.hpp>
+#include <fog_msgs/srv/path.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
+#include <mutex>
+#include <nav_msgs/msg/odometry.hpp>
+#include <nav_msgs/msg/path.hpp>
+#include <navigation/astar_planner.hpp>
+#include <octomap/OcTreeKey.h>
+#include <octomap/octomap.h>
+#include <octomap_msgs/conversions.h>
+#include <octomap_msgs/msg/octomap.hpp>
+#include <octomap_msgs/srv/bounding_box_query.hpp>
+#include <octomap_msgs/srv/get_octomap.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/service.hpp>
 #include <rclcpp/subscription_base.hpp>
 #include <rclcpp/time.hpp>
 #include <rclcpp/timer.hpp>
-
-#include <eigen3/Eigen/Core>
-#include <mutex>
-
-#include <geometry_msgs/msg/transform_stamped.hpp>
-#include <nav_msgs/msg/odometry.hpp>
-#include <nav_msgs/msg/path.hpp>
 #include <std_msgs/msg/color_rgba.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
-
-#include <fog_msgs/srv/path.hpp>
-
-#include <octomap_msgs/conversions.h>
-#include <octomap_msgs/msg/octomap.hpp>
-#include <octomap_msgs/srv/bounding_box_query.hpp>
-#include <octomap_msgs/srv/get_octomap.hpp>
-
-#include <octomap/OcTreeKey.h>
-#include <octomap/octomap.h>
-
-#include <navigation/astar_planner.hpp>
 
 using namespace std::placeholders;
 
@@ -114,6 +109,7 @@ private:
   // services provided
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr goto_trigger_service_;
   rclcpp::Service<fog_msgs::srv::Path>::SharedPtr set_path_service_;
+  rclcpp::Service<fog_msgs::srv::Vec4>::SharedPtr set_waypoint_service_;
 
   // service callbacks
   bool gotoTriggerCallback(
@@ -122,6 +118,9 @@ private:
   bool
   setPathCallback(const std::shared_ptr<fog_msgs::srv::Path::Request> request,
                   std::shared_ptr<fog_msgs::srv::Path::Response> response);
+  bool setWaypointCallback(
+      const std::shared_ptr<fog_msgs::srv::Vec4::Request> request,
+      std::shared_ptr<fog_msgs::srv::Vec4::Response> response);
 
   bool goalReached(const octomap::point3d &goal, double dist_tolerance);
   nav_msgs::msg::Path
@@ -204,6 +203,9 @@ Navigation::Navigation(rclcpp::NodeOptions options)
       std::bind(&Navigation::gotoTriggerCallback, this, _1, _2));
   set_path_service_ = this->create_service<fog_msgs::srv::Path>(
       "~/set_path_in", std::bind(&Navigation::setPathCallback, this, _1, _2));
+  set_waypoint_service_ = this->create_service<fog_msgs::srv::Vec4>(
+      "~/waypoint_in",
+      std::bind(&Navigation::setWaypointCallback, this, _1, _2));
 
   // timers
   execution_timer_ = this->create_wall_timer(
@@ -353,6 +355,48 @@ bool Navigation::setPathCallback(
 
   RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint buffer size: %ld",
               this->get_name(), waypoint_in_buffer_.size());
+
+  RCLCPP_INFO(this->get_logger(), "[%s]: Mission started", this->get_name());
+  status_ = PLANNING;
+
+  response->message = "Navigation goal set";
+  response->success = true;
+  return true;
+}
+//}
+
+/* setWaypointCallback //{ */
+bool Navigation::setWaypointCallback(
+    [[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Vec4::Request>
+        request,
+    std::shared_ptr<fog_msgs::srv::Vec4::Response> response) {
+  if (!is_initialized_) {
+    response->message = "Waypoint rejected. Node not initialized";
+    response->success = false;
+    return false;
+  }
+
+  if (!getting_octomap_) {
+    response->message = "Waypoint rejected. Octomap not received";
+    response->success = false;
+    return false;
+  }
+
+  if (status_ != IDLE) {
+    response->message = "Waypoint rejected. Vehicle not IDLE";
+    response->success = false;
+    return false;
+  }
+
+  waypoint_in_buffer_.clear();
+  octomap::point3d point;
+  point.x() = request->goal[0];
+  point.y() = request->goal[1];
+  point.z() = request->goal[2];
+  waypoint_in_buffer_.push_back(point);
+
+  RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint set: %.2f, %.2f, %.2f",
+              this->get_name(), point.x(), point.y(), point.z());
 
   RCLCPP_INFO(this->get_logger(), "[%s]: Mission started", this->get_name());
   status_ = PLANNING;
