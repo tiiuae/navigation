@@ -1,6 +1,6 @@
 #include <eigen3/Eigen/Core>
-#include <fog_msgs/srv/vec4.hpp>
 #include <fog_msgs/srv/path.hpp>
+#include <fog_msgs/srv/vec4.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <mutex>
 #include <nav_msgs/msg/odometry.hpp>
@@ -93,7 +93,6 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr goal_publisher_;
 
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_publisher_;
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr waypoints_publisher_;
 
   // subscribers
   rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr
@@ -111,6 +110,8 @@ private:
   rclcpp::Service<fog_msgs::srv::Path>::SharedPtr set_path_service_;
   rclcpp::Service<fog_msgs::srv::Vec4>::SharedPtr set_waypoint_service_;
 
+  rclcpp::Client<fog_msgs::srv::Path>::SharedPtr waypoints_client_;
+
   // service callbacks
   bool gotoTriggerCallback(
       const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
@@ -123,8 +124,8 @@ private:
       std::shared_ptr<fog_msgs::srv::Vec4::Response> response);
 
   bool goalReached(const octomap::point3d &goal, double dist_tolerance);
-  nav_msgs::msg::Path
-  waypointsToPathMsg(std::vector<octomap::point3d> waypoints);
+  std::shared_ptr<fog_msgs::srv::Path::Request>
+  waypointsToPathSrv(std::vector<octomap::point3d> waypoints);
 
   AstarPlanner *planner;
 
@@ -184,8 +185,6 @@ Navigation::Navigation(rclcpp::NodeOptions options)
       "~/path_markers_out", 10);
   goal_publisher_ = this->create_publisher<visualization_msgs::msg::Marker>(
       "~/goal_markers_out", 10);
-  waypoints_publisher_ =
-      this->create_publisher<nav_msgs::msg::Path>("~/waypoints_out", 10);
   status_publisher_ =
       this->create_publisher<std_msgs::msg::String>("~/status_out", 10);
 
@@ -196,6 +195,10 @@ Navigation::Navigation(rclcpp::NodeOptions options)
       "~/odometry_in", 1, std::bind(&Navigation::odometryCallback, this, _1));
   goto_subscriber_ = this->create_subscription<nav_msgs::msg::Path>(
       "~/goto_in", 1, std::bind(&Navigation::gotoCallback, this, _1));
+
+  // clients
+  waypoints_client_ =
+      this->create_client<fog_msgs::srv::Path>("~/waypoints_out");
 
   // service handlers
   goto_trigger_service_ = this->create_service<std_srvs::srv::Trigger>(
@@ -493,8 +496,8 @@ void Navigation::navigationRoutine(void) {
           waypoint_out_buffer_.push_back(waypoints[i]);
         }
         visualizePath(waypoints);
-        auto waypoints_msg = waypointsToPathMsg(waypoint_out_buffer_);
-        waypoints_publisher_->publish(waypoints_msg);
+        auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_);
+        auto call_result = waypoints_client_->async_send_request(waypoints_srv);
         current_goal_ = waypoint_out_buffer_.front();
         status_ = MOVING;
         break;
@@ -524,21 +527,32 @@ void Navigation::navigationRoutine(void) {
         auto new_goal = temporary_goal.first;
         priorize_vertical_ = temporary_goal.second;
         RCLCPP_INFO(this->get_logger(), "[%s]: Generated a temporary goal",
-
                     this->get_name());
-
-        waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), new_goal);
 
         if (priorize_vertical_) {
           // move up or down into unknown without planning
           // ASSUME the environment does not change in the vertical direction
           // This could be improved by using a 3D lidar or an upward rangefinder
           priorize_vertical_ = false;
-          waypoint_out_buffer_.push_back(current_goal_);
-          current_goal_ = new_goal;
+          waypoint_out_buffer_.clear();
+          waypoint_out_buffer_.push_back(uav_pos_);
+          waypoint_out_buffer_.push_back(new_goal);
+          waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(),
+                                     current_goal_);
+
+          auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_);
+          auto call_result =
+              waypoints_client_->async_send_request(waypoints_srv);
+          current_goal_ = waypoint_out_buffer_.front();
+          RCLCPP_INFO(this->get_logger(),
+                      "[%s]: Starting a vertical-only segment",
+                      this->get_name());
+
           status_ = MOVING;
           break;
         }
+
+        waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), new_goal);
         break;
       }
       //}
@@ -564,8 +578,8 @@ void Navigation::navigationRoutine(void) {
                     "[%s]: Moving to next waypoint: [%.2f, %.2f, %.2f]",
                     this->get_name(), current_goal_.x(), current_goal_.y(),
                     current_goal_.z());
-        auto waypoints_msg = waypointsToPathMsg(waypoint_out_buffer_);
-        waypoints_publisher_->publish(waypoints_msg);
+        auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_);
+        auto call_result = waypoints_client_->async_send_request(waypoints_srv);
         current_goal_ = waypoint_out_buffer_.front();
       }
       break;
@@ -588,9 +602,9 @@ bool Navigation::goalReached(const octomap::point3d &goal,
 }
 //}
 
-/* waypointsToPathMsg //{ */
-nav_msgs::msg::Path
-Navigation::waypointsToPathMsg(const std::vector<octomap::point3d> waypoints) {
+/* waypointsToPathSrv //{ */
+std::shared_ptr<fog_msgs::srv::Path::Request>
+Navigation::waypointsToPathSrv(const std::vector<octomap::point3d> waypoints) {
   nav_msgs::msg::Path msg;
   msg.header.stamp = this->get_clock()->now();
   msg.header.frame_id = parent_frame_;
@@ -601,7 +615,9 @@ Navigation::waypointsToPathMsg(const std::vector<octomap::point3d> waypoints) {
     p.pose.position.z = wp.z();
     msg.poses.push_back(p);
   }
-  return msg;
+  auto path_srv = std::make_shared<fog_msgs::srv::Path::Request>();
+  path_srv->path = msg;
+  return path_srv;
 }
 //}
 

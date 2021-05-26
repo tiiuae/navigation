@@ -74,19 +74,19 @@ std::vector<octomap::point3d> AstarPlanner::findPath(
     visualizeTree(*binary_tree);
   }
 
-  std::vector<octomap::OcTreeKey> ceiling_leaf_keys;
-  for (auto it = binary_tree->begin_leafs(); it != binary_tree->end_leafs(); it++) {
-    auto k = it.getKey();
-    k.k[2] += 1;
-    if (binary_tree->search(k) == NULL) {
-      ceiling_leaf_keys.push_back(it.getKey());
-      continue;
-    }
-    k.k[2] -= 2;
-    if (binary_tree->search(k) == NULL) {
-      ceiling_leaf_keys.push_back(it.getKey());
-    }
-  }
+  /* std::vector<octomap::OcTreeKey> ceiling_leaf_keys; */
+  /* for (auto it = binary_tree->begin_leafs(); it != binary_tree->end_leafs(); it++) { */
+  /*   auto k = it.getKey(); */
+  /*   k.k[2] += 1; */
+  /*   if (binary_tree->search(k) == NULL) { */
+  /*     ceiling_leaf_keys.push_back(it.getKey()); */
+  /*     continue; */
+  /*   } */
+  /*   k.k[2] -= 2; */
+  /*   if (binary_tree->search(k) == NULL) { */
+  /*     ceiling_leaf_keys.push_back(it.getKey()); */
+  /*   } */
+  /* } */
 
   octomap::OcTreeKey start;
   if (tunnel.empty()) {
@@ -155,10 +155,10 @@ std::vector<octomap::point3d> AstarPlanner::findPath(
 
     for (auto &nkey : neighbors) {
 
-      if (std::find(ceiling_leaf_keys.begin(), ceiling_leaf_keys.end(), nkey) != ceiling_leaf_keys.end()) {
-        // skip leafs
-        continue;
-      }
+      /* if (std::find(ceiling_leaf_keys.begin(), ceiling_leaf_keys.end(), nkey) != ceiling_leaf_keys.end()) { */
+      /*   // skip leafs */
+      /*   continue; */
+      /* } */
 
       auto      ncoord = binary_tree->keyToCoord(nkey);
       Expansion n;
