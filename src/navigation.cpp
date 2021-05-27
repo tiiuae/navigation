@@ -6,6 +6,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <navigation/astar_planner.hpp>
+#include <octomap/OcTree.h>
 #include <octomap/OcTreeKey.h>
 #include <octomap/octomap.h>
 #include <octomap_msgs/conversions.h>
@@ -27,9 +28,9 @@ using namespace std::placeholders;
 
 namespace navigation {
 
-enum status_t { IDLE = 0, PLANNING, MOVING };
+enum status_t { IDLE = 0, PLANNING, COMMANDING, MOVING };
 
-std::string status_string[] = {"IDLE", "PLANNING", "MOVING"};
+std::string status_string[] = {"IDLE", "PLANNING", "COMMANDING", "MOVING"};
 
 /* class Navigation //{ */
 class Navigation : public rclcpp::Node {
@@ -45,16 +46,16 @@ private:
   bool visualize_planner_ = true;
   bool show_unoccupied_ = false;
   std::string parent_frame_;
+  int replanning_without_motion = 0;
 
   octomap::point3d uav_pos_;
-  octomap::point3d last_uav_pos_;
+  octomap::point3d current_goal_;
   std::mutex octree_mutex_;
   std::shared_ptr<octomap::OcTree> octree_;
   std::mutex status_mutex_;
   status_t status_ = IDLE;
 
   octomap::point3d goal_;
-  octomap::point3d current_goal_;
   std::vector<octomap::point3d> waypoint_out_buffer_;
   std::vector<octomap::point3d> waypoint_in_buffer_;
 
@@ -74,6 +75,7 @@ private:
   double planning_tree_resolution_;
   double max_waypoint_distance_;
   double planning_timeout_;
+  int replanning_limit_;
 
   // visualization params
   double tree_points_scale_;
@@ -140,6 +142,10 @@ private:
   std_msgs::msg::ColorRGBA generateColor(const double r, const double g,
                                          const double b, const double a);
 
+  std::pair<std::vector<octomap::point3d>, bool>
+  generatePathWaypoints(const octomap::point3d &start,
+                        const octomap::point3d &end);
+
   template <class T> bool parse_param(std::string param_name, T &param_dest);
 };
 //}
@@ -162,6 +168,7 @@ Navigation::Navigation(rclcpp::NodeOptions options)
   parse_param("planning_tree_resolution", planning_tree_resolution_);
   parse_param("max_waypoint_distance", max_waypoint_distance_);
   parse_param("planning_timeout", planning_timeout_);
+  parse_param("replanning_limit", replanning_limit_);
 
   parse_param("visualize_planner", visualize_planner_);
   parse_param("show_unoccupied", show_unoccupied_);
@@ -421,6 +428,7 @@ void Navigation::navigationRoutine(void) {
 
     /* IDLE //{ */
     case IDLE: {
+      replanning_without_motion = 0;
       break;
     }
       //}
@@ -428,21 +436,6 @@ void Navigation::navigationRoutine(void) {
     /* PLANNING //{ */
     case PLANNING: {
 
-      if (waypoint_in_buffer_.empty()) {
-        RCLCPP_INFO(this->get_logger(), "[%s]: All waypoints have been visited",
-                    this->get_name());
-        status_ = IDLE;
-        break;
-      }
-
-      current_goal_ = waypoint_in_buffer_.front();
-      waypoint_in_buffer_.erase(waypoint_in_buffer_.begin());
-      RCLCPP_INFO(this->get_logger(),
-                  "[%s]: Waypoint [%.2f, %.2f, %.2f] set as a next goal",
-                  this->get_name(), current_goal_.x(), current_goal_.y(),
-                  current_goal_.z());
-
-      //{
       std::scoped_lock lock(octree_mutex_);
 
       if (octree_ == NULL || octree_->size() < 1) {
@@ -453,105 +446,98 @@ void Navigation::navigationRoutine(void) {
         break;
       }
 
-      visualizeGoals(waypoint_in_buffer_, current_goal_);
+      if (waypoint_in_buffer_.empty()) {
+        RCLCPP_INFO(this->get_logger(), "[%s]: All waypoints have been visited",
+                    this->get_name());
+        status_ = IDLE;
+        break;
+      }
 
-      RCLCPP_INFO(this->get_logger(), "[%s]: Planning started",
+      octomap::point3d current_goal = waypoint_in_buffer_.front();
+      waypoint_in_buffer_.erase(waypoint_in_buffer_.begin());
+      RCLCPP_INFO(this->get_logger(),
+                  "[%s]: Waypoint [%.2f, %.2f, %.2f] set as a next goal",
+                  this->get_name(), current_goal.x(), current_goal.y(),
+                  current_goal.z());
+
+      visualizeGoals(waypoint_in_buffer_, current_goal);
+
+      RCLCPP_INFO(this->get_logger(), "[%s]: Generating planning tree",
                   this->get_name());
 
       planner->generatePlanningTree(octree_, uav_pos_,
                                     planning_tree_resolution_);
 
-      // check if goal is in map and if the map cell is unoccupied
-      bool goal_in_map = planner->inMap(current_goal_);
-      bool goal_valid = planner->isFree(current_goal_);
+      // check if goal is in map
+      bool goal_in_map = planner->inMap(current_goal);
 
-      if (goal_in_map && goal_valid) {
+      /* goal in map //{ */
+      if (goal_in_map) {
+        // check if the goal map cell is unoccupied
+        bool goal_valid = planner->isFree(current_goal);
 
-        auto waypoints = planner->findPath(
-            uav_pos_, current_goal_, octree_,
-            std::bind(&Navigation::visualizeTree, this, _1),
-            std::bind(&Navigation::visualizeExpansions, this, _1, _2),
-            visualize_planner_);
-        if (waypoints.size() < 2) {
-          RCLCPP_ERROR(this->get_logger(),
-                       "[%s]: Path not found! Likely reason: bowl-shaped "
-                       "obstacle larger than detection radius",
-                       this->get_name());
-          status_ = IDLE;
+        /* goal valid //{ */
+        if (goal_valid) {
+          auto pathfinding_result =
+              generatePathWaypoints(uav_pos_, current_goal);
+          auto waypoints = pathfinding_result.first;
+          bool is_complete = pathfinding_result.second;
+          for (auto &w : waypoints) {
+            waypoint_out_buffer_.push_back(w);
+          }
+          if (!is_complete) {
+            waypoint_in_buffer_.push_back(current_goal);
+          }
+          auto path_srv = waypointsToPathSrv(waypoints);
+          status_ = COMMANDING;
           break;
         }
+        //}
 
-        RCLCPP_INFO(this->get_logger(), "[%s]: Postprocessing path",
-                    this->get_name());
-        auto processed = planner->postprocessPath(waypoints);
-        RCLCPP_INFO(this->get_logger(),
-                    "[%s]: Transformed %ld waypoints to %ld waypoints",
-                    this->get_name(), waypoints.size(), processed.size());
-        waypoints = processed;
-
-        waypoint_out_buffer_.clear();
-        double dist = 0.0;
-        waypoint_out_buffer_.push_back(waypoints[0]);
-        for (size_t i = 1; i < waypoints.size(); i++) {
-          waypoint_out_buffer_.push_back(waypoints[i]);
+        /* goal not valid //{ */
+        else {
+          RCLCPP_WARN(this->get_logger(),
+                      "[%s]: Goal is in map, but the cell is unreachable",
+                      this->get_name());
+          RCLCPP_INFO(this->get_logger(),
+                      "[%s]: A nearby replacement goal will be used",
+                      this->get_name());
+          auto new_goal = planner->nearestFreeCoord(current_goal, uav_pos_);
+          waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), new_goal);
+          // first goal in input buffer is now valid
+          // planning will be executed in the next cycle
+          break;
         }
-        visualizePath(waypoints);
-        auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_);
-        auto call_result = waypoints_client_->async_send_request(waypoints_srv);
-        current_goal_ = waypoint_out_buffer_.front();
-        status_ = MOVING;
-        break;
+        //}
       }
+      //}
 
-      if (goal_in_map && !goal_valid) {
-        RCLCPP_WARN(this->get_logger(),
-                    "[%s]: Goal is in map, but the cell is unreachable",
-                    this->get_name());
-        RCLCPP_INFO(this->get_logger(),
-                    "[%s]: A nearby replacement goal will be used",
-                    this->get_name());
-
-        auto new_goal = planner->nearestFreeCoord(current_goal_, uav_pos_);
-
-        waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), new_goal);
-        // first goal in input buffer is now valid
-        // planning will be executed in the next cycle
-        break;
-      }
-
-      if (!goal_in_map) {
+      /* goal not in map //{ */
+      else {
         RCLCPP_INFO(this->get_logger(), "[%s]: Goal is outside of map",
                     this->get_name());
         auto temporary_goal =
-            planner->generateTemporaryGoal(uav_pos_, current_goal_);
+            planner->generateTemporaryGoal(uav_pos_, current_goal);
         auto new_goal = temporary_goal.first;
-        priorize_vertical_ = temporary_goal.second;
-        RCLCPP_INFO(this->get_logger(), "[%s]: Generated a temporary goal",
-                    this->get_name());
+        bool priorize_vertical = temporary_goal.second;
+        RCLCPP_INFO(this->get_logger(),
+                    "[%s]: Generated a temporary goal: [%.2f, %.2f, %.2f]",
+                    this->get_name(), new_goal.x(), new_goal.y(), new_goal.z());
 
-        if (priorize_vertical_) {
+        /* priorize vertical //{ */
+        if (priorize_vertical) {
           // move up or down into unknown without planning
           // ASSUME the environment does not change in the vertical direction
           // This could be improved by using a 3D lidar or an upward rangefinder
-          priorize_vertical_ = false;
-          waypoint_out_buffer_.clear();
           waypoint_out_buffer_.push_back(uav_pos_);
           waypoint_out_buffer_.push_back(new_goal);
-          waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(),
-                                     current_goal_);
-
-          auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_);
-          auto call_result =
-              waypoints_client_->async_send_request(waypoints_srv);
-          current_goal_ = waypoint_out_buffer_.front();
-          RCLCPP_INFO(this->get_logger(),
-                      "[%s]: Starting a vertical-only segment",
-                      this->get_name());
-
-          status_ = MOVING;
+          waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
+          status_ = COMMANDING;
           break;
         }
+        //}
 
+        waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
         waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), new_goal);
         break;
       }
@@ -559,28 +545,43 @@ void Navigation::navigationRoutine(void) {
 
       break;
     }
+    //}
+
+    /* COMMANDING //{ */
+    case COMMANDING: {
+      if (replanning_without_motion >= replanning_limit_) {
+        RCLCPP_ERROR(this->get_logger(),
+                     "[%s]: No waypoint produced after %d repeated attempts. "
+                     "Please provide a new waypoint");
+        status_ = IDLE;
+      }
+      if (waypoint_out_buffer_.size() < 1) {
+        RCLCPP_WARN(this->get_logger(),
+                    "[%s]: Planning did not produce any waypoints. Retrying...",
+                    this->get_name());
+        replanning_without_motion++;
+        status_ = PLANNING;
+      }
+      RCLCPP_INFO(this->get_logger(),
+                  "[%s]: Sending %ld waypoints to the control interface",
+                  this->get_name(), waypoint_out_buffer_.size());
+      visualizePath(waypoint_out_buffer_);
+      auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_);
+      auto call_result = waypoints_client_->async_send_request(waypoints_srv);
+      current_goal_ = waypoint_out_buffer_.back();
+      waypoint_out_buffer_.clear();
+      status_ = MOVING;
+      break;
+    }
       //}
 
       /* MOVING //{ */
     case MOVING: {
-
-      if (waypoint_out_buffer_.empty()) {
+      replanning_without_motion = 0;
+      if (goalReached(current_goal_, navigation_tolerance_)) {
         RCLCPP_INFO(this->get_logger(), "[%s]: End of current segment reached",
                     this->get_name());
         status_ = PLANNING;
-        break;
-      }
-
-      if (goalReached(current_goal_, navigation_tolerance_)) {
-        waypoint_out_buffer_.erase(waypoint_out_buffer_.begin());
-        current_goal_ = waypoint_out_buffer_.front();
-        RCLCPP_INFO(this->get_logger(),
-                    "[%s]: Moving to next waypoint: [%.2f, %.2f, %.2f]",
-                    this->get_name(), current_goal_.x(), current_goal_.y(),
-                    current_goal_.z());
-        auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_);
-        auto call_result = waypoints_client_->async_send_request(waypoints_srv);
-        current_goal_ = waypoint_out_buffer_.front();
       }
       break;
     }
@@ -591,6 +592,32 @@ void Navigation::navigationRoutine(void) {
   std_msgs::msg::String msg;
   msg.data = status_string[status_];
   status_publisher_->publish(msg);
+}
+//}
+
+/* generatePathWaypoints //{ */
+std::pair<std::vector<octomap::point3d>, bool>
+Navigation::generatePathWaypoints(const octomap::point3d &start,
+                                  const octomap::point3d &end) {
+  std::vector<octomap::point3d> waypoints;
+
+  RCLCPP_INFO(this->get_logger(), "[%s]: Finding path", this->get_name());
+
+  auto pathfinding_result = planner->findPath(
+      start, end, std::bind(&Navigation::visualizeTree, this, _1),
+      std::bind(&Navigation::visualizeExpansions, this, _1, _2),
+      visualize_planner_);
+
+  waypoints = pathfinding_result.first;
+
+  RCLCPP_INFO(this->get_logger(), "[%s]: Postprocessing path",
+              this->get_name());
+  auto processed = planner->postprocessPath(waypoints);
+  RCLCPP_INFO(this->get_logger(),
+              "[%s]: Transformed %ld waypoints to %ld waypoints",
+              this->get_name(), waypoints.size(), processed.size());
+  waypoints = processed;
+  return {waypoints, pathfinding_result.second};
 }
 //}
 
