@@ -43,6 +43,7 @@ def generate_launch_description():
                     ("~/goto_in", "~/goto_waypoints"),
                     ("~/goto_trigger_in", "~/goto_start"),
                     ("~/set_path_in", "~/set_path"),
+                    ("~/control_diagnostics_in",  "/" + DRONE_DEVICE_ID + "/control_interface/diagnostics"),
                 ],
             ),
         ],

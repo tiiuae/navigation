@@ -23,12 +23,20 @@
 #include <std_srvs/srv/trigger.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <fog_msgs/msg/control_interface_diagnostics.hpp>
 
 using namespace std::placeholders;
 
-namespace navigation {
+namespace navigation
+{
 
-enum status_t { IDLE = 0, PLANNING, COMMANDING, MOVING };
+enum status_t
+{
+  IDLE = 0,
+  PLANNING,
+  COMMANDING,
+  MOVING
+};
 
 std::string status_string[] = {"IDLE", "PLANNING", "COMMANDING", "MOVING"};
 
@@ -39,35 +47,39 @@ public:
 
 private:
   // internal variables
-  bool is_initialized_ = false;
-  bool getting_octomap_ = false;
-  bool getting_odometry_ = false;
-  bool priorize_vertical_ = false;
-  bool visualize_planner_ = true;
-  bool show_unoccupied_ = false;
+  bool is_initialized_              = false;
+  bool getting_octomap_             = false;
+  bool getting_odometry_            = false;
+  bool getting_control_diagnostics_ = false;
+  bool visualize_planner_           = true;
+  bool show_unoccupied_             = false;
+
   std::string parent_frame_;
-  int replanning_without_motion = 0;
+  int         replanning_without_motion = 0;
 
-  octomap::point3d uav_pos_;
-  octomap::point3d current_goal_;
-  std::mutex octree_mutex_;
+  bool control_moving_ = false;
+  bool goal_reached_   = false;
+
+  octomap::point3d                 uav_pos_;
+  octomap::point3d                 current_goal_;
+  std::mutex                       octree_mutex_;
   std::shared_ptr<octomap::OcTree> octree_;
-  std::mutex status_mutex_;
-  status_t status_ = IDLE;
+  std::mutex                       status_mutex_;
+  status_t                         status_ = IDLE;
 
-  octomap::point3d goal_;
+  octomap::point3d              goal_;
   std::vector<octomap::point3d> waypoint_out_buffer_;
   std::vector<octomap::point3d> waypoint_in_buffer_;
 
   rclcpp::CallbackGroup::SharedPtr callback_group_;
-  rclcpp::TimerBase::SharedPtr execution_timer_;
-  void navigationRoutine(void);
+  rclcpp::TimerBase::SharedPtr     execution_timer_;
+  void                             navigationRoutine(void);
 
   // params
   double euclidean_distance_cutoff_;
   double safe_obstacle_distance_;
   double navigation_tolerance_;
-  bool unknown_is_occupied_;
+  bool   unknown_is_occupied_;
   double min_altitude_;
   double distance_penalty_;
   double greedy_penalty_;
@@ -75,7 +87,8 @@ private:
   double planning_tree_resolution_;
   double max_waypoint_distance_;
   double planning_timeout_;
-  int replanning_limit_;
+  int    replanning_limit_;
+  double replanning_distance_;
 
   // visualization params
   double tree_points_scale_;
@@ -85,74 +98,59 @@ private:
   double goal_points_scale_;
 
   // publishers
-  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr
-      field_publisher_;
-  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr
-      binary_tree_publisher_;
-  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr
-      expansion_publisher_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr field_publisher_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr binary_tree_publisher_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr expansion_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr path_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr goal_publisher_;
 
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_publisher_;
 
   // subscribers
-  rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr
-      octomap_subscriber_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscriber_;
-  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr goto_subscriber_;
+  rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr                 octomap_subscriber_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr                    odometry_subscriber_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr                        goto_subscriber_;
+  rclcpp::Subscription<fog_msgs::msg::ControlInterfaceDiagnostics>::SharedPtr control_diagnostics_subscriber_;
 
   // subscriber callbacks
   void octomapCallback(const octomap_msgs::msg::Octomap::UniquePtr msg);
   void odometryCallback(const nav_msgs::msg::Odometry::UniquePtr msg);
   void gotoCallback(const nav_msgs::msg::Path::UniquePtr msg);
+  void controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfaceDiagnostics::UniquePtr msg);
 
   // services provided
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr goto_trigger_service_;
-  rclcpp::Service<fog_msgs::srv::Path>::SharedPtr set_path_service_;
-  rclcpp::Service<fog_msgs::srv::Vec4>::SharedPtr set_waypoint_service_;
+  rclcpp::Service<fog_msgs::srv::Path>::SharedPtr    set_path_service_;
+  rclcpp::Service<fog_msgs::srv::Vec4>::SharedPtr    set_waypoint_service_;
 
   rclcpp::Client<fog_msgs::srv::Path>::SharedPtr waypoints_client_;
 
   // service callbacks
-  bool gotoTriggerCallback(
-      const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-      std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-  bool
-  setPathCallback(const std::shared_ptr<fog_msgs::srv::Path::Request> request,
-                  std::shared_ptr<fog_msgs::srv::Path::Response> response);
-  bool setWaypointCallback(
-      const std::shared_ptr<fog_msgs::srv::Vec4::Request> request,
-      std::shared_ptr<fog_msgs::srv::Vec4::Response> response);
+  bool gotoTriggerCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request, std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+  bool setPathCallback(const std::shared_ptr<fog_msgs::srv::Path::Request> request, std::shared_ptr<fog_msgs::srv::Path::Response> response);
+  bool setWaypointCallback(const std::shared_ptr<fog_msgs::srv::Vec4::Request> request, std::shared_ptr<fog_msgs::srv::Vec4::Response> response);
 
-  bool goalReached(const octomap::point3d &goal, double dist_tolerance);
-  std::shared_ptr<fog_msgs::srv::Path::Request>
-  waypointsToPathSrv(std::vector<octomap::point3d> waypoints);
+  std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPathSrv(std::vector<octomap::point3d> waypoints, bool use_first = true);
 
   AstarPlanner *planner;
 
   // visualization
   void visualizeTree(const octomap::OcTree &tree);
-  void visualizeExpansions(const std::set<Expansion, CostComparator> &open_list,
-                           const octomap::OcTree &tree);
+  void visualizeExpansions(const std::set<Expansion, CostComparator> &open_list, const octomap::OcTree &tree);
   void visualizePath(const std::vector<octomap::point3d> waypoints);
-  void visualizeGoals(const std::vector<octomap::point3d> waypoints,
-                      const octomap::point3d current_goal);
+  void visualizeGoals(const std::vector<octomap::point3d> waypoints, const octomap::point3d current_goal);
 
-  std_msgs::msg::ColorRGBA generateColor(const double r, const double g,
-                                         const double b, const double a);
+  std_msgs::msg::ColorRGBA generateColor(const double r, const double g, const double b, const double a);
 
-  std::pair<std::vector<octomap::point3d>, bool>
-  generatePathWaypoints(const octomap::point3d &start,
-                        const octomap::point3d &end);
+  std::pair<std::vector<octomap::point3d>, bool> generatePathWaypoints(const octomap::point3d &start, const octomap::point3d &end);
 
-  template <class T> bool parse_param(std::string param_name, T &param_dest);
+  template <class T>
+  bool parse_param(std::string param_name, T &param_dest);
 };
 //}
 
 /* constructor //{ */
-Navigation::Navigation(rclcpp::NodeOptions options)
-    : Node("navigation", options) {
+Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options) {
 
   RCLCPP_INFO(this->get_logger(), "[%s]: Initializing...", this->get_name());
 
@@ -169,6 +167,7 @@ Navigation::Navigation(rclcpp::NodeOptions options)
   parse_param("max_waypoint_distance", max_waypoint_distance_);
   parse_param("planning_timeout", planning_timeout_);
   parse_param("replanning_limit", replanning_limit_);
+  parse_param("replanning_distance", replanning_distance_);
 
   parse_param("visualize_planner", visualize_planner_);
   parse_param("show_unoccupied", show_unoccupied_);
@@ -180,53 +179,33 @@ Navigation::Navigation(rclcpp::NodeOptions options)
   //}
 
   // publishers
-  field_publisher_ = this->create_publisher<visualization_msgs::msg::Marker>(
-      "~/field_markers_out", 1);
-  binary_tree_publisher_ =
-      this->create_publisher<visualization_msgs::msg::Marker>(
-          "~/binary_tree_markers_out", 1);
-  expansion_publisher_ =
-      this->create_publisher<visualization_msgs::msg::Marker>(
-          "~/expansion_markers_out", 1);
-  path_publisher_ = this->create_publisher<visualization_msgs::msg::Marker>(
-      "~/path_markers_out", 10);
-  goal_publisher_ = this->create_publisher<visualization_msgs::msg::Marker>(
-      "~/goal_markers_out", 10);
-  status_publisher_ =
-      this->create_publisher<std_msgs::msg::String>("~/status_out", 10);
+  field_publisher_       = this->create_publisher<visualization_msgs::msg::Marker>("~/field_markers_out", 1);
+  binary_tree_publisher_ = this->create_publisher<visualization_msgs::msg::Marker>("~/binary_tree_markers_out", 1);
+  expansion_publisher_   = this->create_publisher<visualization_msgs::msg::Marker>("~/expansion_markers_out", 1);
+  path_publisher_        = this->create_publisher<visualization_msgs::msg::Marker>("~/path_markers_out", 10);
+  goal_publisher_        = this->create_publisher<visualization_msgs::msg::Marker>("~/goal_markers_out", 10);
+  status_publisher_      = this->create_publisher<std_msgs::msg::String>("~/status_out", 10);
 
   // subscribers
-  octomap_subscriber_ = this->create_subscription<octomap_msgs::msg::Octomap>(
-      "~/octomap_in", 1, std::bind(&Navigation::octomapCallback, this, _1));
-  odometry_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>(
-      "~/odometry_in", 1, std::bind(&Navigation::odometryCallback, this, _1));
-  goto_subscriber_ = this->create_subscription<nav_msgs::msg::Path>(
-      "~/goto_in", 1, std::bind(&Navigation::gotoCallback, this, _1));
+  octomap_subscriber_             = this->create_subscription<octomap_msgs::msg::Octomap>("~/octomap_in", 1, std::bind(&Navigation::octomapCallback, this, _1));
+  odometry_subscriber_            = this->create_subscription<nav_msgs::msg::Odometry>("~/odometry_in", 1, std::bind(&Navigation::odometryCallback, this, _1));
+  goto_subscriber_                = this->create_subscription<nav_msgs::msg::Path>("~/goto_in", 1, std::bind(&Navigation::gotoCallback, this, _1));
+  control_diagnostics_subscriber_ = this->create_subscription<fog_msgs::msg::ControlInterfaceDiagnostics>(
+      "~/control_diagnostics_in", 1, std::bind(&Navigation::controlDiagnosticsCallback, this, _1));
 
   // clients
-  waypoints_client_ =
-      this->create_client<fog_msgs::srv::Path>("~/waypoints_out");
+  waypoints_client_ = this->create_client<fog_msgs::srv::Path>("~/waypoints_out");
 
   // service handlers
-  goto_trigger_service_ = this->create_service<std_srvs::srv::Trigger>(
-      "~/goto_trigger_in",
-      std::bind(&Navigation::gotoTriggerCallback, this, _1, _2));
-  set_path_service_ = this->create_service<fog_msgs::srv::Path>(
-      "~/set_path_in", std::bind(&Navigation::setPathCallback, this, _1, _2));
-  set_waypoint_service_ = this->create_service<fog_msgs::srv::Vec4>(
-      "~/waypoint_in",
-      std::bind(&Navigation::setWaypointCallback, this, _1, _2));
+  goto_trigger_service_ = this->create_service<std_srvs::srv::Trigger>("~/goto_trigger_in", std::bind(&Navigation::gotoTriggerCallback, this, _1, _2));
+  set_path_service_     = this->create_service<fog_msgs::srv::Path>("~/set_path_in", std::bind(&Navigation::setPathCallback, this, _1, _2));
+  set_waypoint_service_ = this->create_service<fog_msgs::srv::Vec4>("~/waypoint_in", std::bind(&Navigation::setWaypointCallback, this, _1, _2));
 
   // timers
-  execution_timer_ = this->create_wall_timer(
-      std::chrono::duration<double>(1.0 / 10.0),
-      std::bind(&Navigation::navigationRoutine, this), callback_group_);
+  execution_timer_ = this->create_wall_timer(std::chrono::duration<double>(1.0 / 10.0), std::bind(&Navigation::navigationRoutine, this), callback_group_);
 
-  planner = new AstarPlanner(
-      safe_obstacle_distance_, euclidean_distance_cutoff_,
-      planning_tree_resolution_, distance_penalty_, greedy_penalty_,
-      vertical_penalty_, unknown_is_occupied_, navigation_tolerance_,
-      max_waypoint_distance_, planning_timeout_);
+  planner = new AstarPlanner(safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_,
+                             vertical_penalty_, unknown_is_occupied_, navigation_tolerance_, max_waypoint_distance_, planning_timeout_);
 
   is_initialized_ = true;
   RCLCPP_INFO(this->get_logger(), "[%s]: Initialized", this->get_name());
@@ -234,43 +213,78 @@ Navigation::Navigation(rclcpp::NodeOptions options)
 //}
 
 /* octomapCallback //{ */
-void Navigation::octomapCallback(
-    const octomap_msgs::msg::Octomap::UniquePtr msg) {
+void Navigation::octomapCallback(const octomap_msgs::msg::Octomap::UniquePtr msg) {
   getting_octomap_ = true;
-  parent_frame_ = msg->header.frame_id;
-  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Getting octomap",
-                   this->get_name());
+  parent_frame_    = msg->header.frame_id;
+  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Getting octomap", this->get_name());
   octomap_msgs::msg::Octomap map_msg = *msg;
 
   auto treePtr = octomap_msgs::fullMsgToMap(*msg);
 
   if (!treePtr) {
-    RCLCPP_WARN(this->get_logger(), "[%s]: Octomap message is empty!",
-                this->get_name());
+    RCLCPP_WARN(this->get_logger(), "[%s]: Octomap message is empty!", this->get_name());
   } else {
     std::scoped_lock lock(octree_mutex_);
-    octree_ = std::shared_ptr<octomap::OcTree>(
-        dynamic_cast<octomap::OcTree *>(treePtr));
+    octree_ = std::shared_ptr<octomap::OcTree>(dynamic_cast<octomap::OcTree *>(treePtr));
   }
 }
 //}
 
 /* odometryCallback //{ */
-void Navigation::odometryCallback(
-    const nav_msgs::msg::Odometry::UniquePtr msg) {
+void Navigation::odometryCallback(const nav_msgs::msg::Odometry::UniquePtr msg) {
+  if (!is_initialized_) {
+    return;
+  }
+
   getting_odometry_ = true;
-  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Getting odometry",
-                   this->get_name());
+  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Getting odometry", this->get_name());
   uav_pos_.x() = msg->pose.pose.position.x;
   uav_pos_.y() = msg->pose.pose.position.y;
   uav_pos_.z() = msg->pose.pose.position.z;
 }
 //}
 
+/* controlDiagnosticsCallback //{ */
+void Navigation::controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfaceDiagnostics::UniquePtr msg) {
+  if (!is_initialized_) {
+    return;
+  }
+  getting_control_diagnostics_ = true;
+  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Getting control_interface diagnostics", this->get_name());
+  control_moving_ = msg->moving;
+  goal_reached_   = msg->mission_finished;
+}
+//}
+
 /* gotoCallback //{ */
 void Navigation::gotoCallback(const nav_msgs::msg::Path::UniquePtr msg) {
-  RCLCPP_INFO(this->get_logger(), "[%s]: Recieved %ld waypoints",
-              this->get_name(), msg->poses.size());
+
+  if (!is_initialized_) {
+    RCLCPP_ERROR(this->get_logger(), "[%s]: Goto rejected, node not initialized", this->get_name());
+    return;
+  }
+
+  if (!getting_octomap_) {
+    RCLCPP_ERROR(this->get_logger(), "[%s]: Goto rejected, octomap not received", this->get_name());
+    return;
+  }
+
+  if (!getting_control_diagnostics_) {
+    RCLCPP_ERROR(this->get_logger(), "[%s]: Goto rejected, control_interface diagnostics not received", this->get_name());
+    return;
+  }
+
+  if (status_ != IDLE) {
+    RCLCPP_ERROR(this->get_logger(), "[%s]: Goto rejected, vehicle not IDLE", this->get_name());
+    return;
+  }
+
+  if (msg->poses.empty()) {
+    RCLCPP_ERROR(this->get_logger(), "[%s]: Goto rejected, path input does not contain any waypoints", this->get_name());
+    return;
+  }
+
+  RCLCPP_INFO(this->get_logger(), "[%s]: Recieved %ld waypoints", this->get_name(), msg->poses.size());
 
   waypoint_in_buffer_.clear();
   for (const auto &p : msg->poses) {
@@ -280,78 +294,92 @@ void Navigation::gotoCallback(const nav_msgs::msg::Path::UniquePtr msg) {
     point.z() = p.pose.position.z;
     waypoint_in_buffer_.push_back(point);
   }
-
-  RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint buffer size: %ld",
-              this->get_name(), waypoint_in_buffer_.size());
+  RCLCPP_INFO(this->get_logger(), "[%s]: Waiting for planning trigger", this->get_name());
 }
 //}
 
 /* gotoTriggerCallback //{ */
-bool Navigation::gotoTriggerCallback(
-    [[maybe_unused]] const std::shared_ptr<std_srvs::srv::Trigger::Request>
-        request,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+bool Navigation::gotoTriggerCallback([[maybe_unused]] const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                                     std::shared_ptr<std_srvs::srv::Trigger::Response>                       response) {
   if (!is_initialized_) {
-    response->message = "Goto rejected. Node not initialized";
+    response->message = "Goto rejected, node not initialized";
     response->success = false;
-    return false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
   }
 
   if (!getting_octomap_) {
-    response->message = "Goto rejected. Octomap not received";
+    response->message = "Goto rejected, octomap not received";
     response->success = false;
-    return false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (!getting_control_diagnostics_) {
+    response->message = "Goto rejected, control_interface diagnostics not received";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
   }
 
   if (status_ != IDLE) {
-    response->message = "Goto rejected. Vehicle not IDLE";
+    response->message = "Goto rejected, vehicle not IDLE";
     response->success = false;
-    return false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
   }
 
   if (waypoint_in_buffer_.empty()) {
-    response->message = "Goto rejected. No waypoint input provided";
+    response->message = "Goto rejected, no waypoint provided";
     response->success = false;
-    return false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
   }
 
-  RCLCPP_INFO(this->get_logger(), "[%s]: Mission started", this->get_name());
-  status_ = PLANNING;
-
-  response->message = "Mission started";
+  response->message = "Planning started";
   response->success = true;
+  RCLCPP_INFO(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+  status_ = PLANNING;
   return true;
 }
 //}
 
 /* setPathCallback //{ */
-bool Navigation::setPathCallback(
-    [[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Path::Request>
-        request,
-    std::shared_ptr<fog_msgs::srv::Path::Response> response) {
+bool Navigation::setPathCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Path::Request> request,
+                                 std::shared_ptr<fog_msgs::srv::Path::Response>                       response) {
   if (!is_initialized_) {
-    response->message = "Goto rejected. Node not initialized";
+    response->message = "Path rejected, node not initialized";
     response->success = false;
-    return false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
   }
 
   if (!getting_octomap_) {
-    response->message = "Goto rejected. Octomap not received";
+    response->message = "Path rejected, octomap not received";
     response->success = false;
-    return false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (!getting_control_diagnostics_) {
+    response->message = "Path rejected, control_interface diagnostics not received";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
   }
 
   if (status_ != IDLE) {
-    response->message = "Goto rejected. Vehicle not IDLE";
+    response->message = "Path rejected, vehicle not IDLE";
     response->success = false;
-    return false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
   }
 
   if (request->path.poses.empty()) {
-    response->message =
-        "Goto rejected. Path input does not contain any waypoints";
+    response->message = "Path rejected, path input does not contain any waypoints";
     response->success = false;
-    return false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
   }
 
   waypoint_in_buffer_.clear();
@@ -363,39 +391,43 @@ bool Navigation::setPathCallback(
     waypoint_in_buffer_.push_back(point);
   }
 
-  RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint buffer size: %ld",
-              this->get_name(), waypoint_in_buffer_.size());
-
-  RCLCPP_INFO(this->get_logger(), "[%s]: Mission started", this->get_name());
-  status_ = PLANNING;
-
-  response->message = "Navigation goal set";
+  RCLCPP_INFO(this->get_logger(), "[%s]: Recieved %ld waypoints. Planning started", this->get_name(), request->path.poses.size());
+  response->message = "Planning started";
   response->success = true;
+  status_           = PLANNING;
   return true;
 }
 //}
 
 /* setWaypointCallback //{ */
-bool Navigation::setWaypointCallback(
-    [[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Vec4::Request>
-        request,
-    std::shared_ptr<fog_msgs::srv::Vec4::Response> response) {
+bool Navigation::setWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Vec4::Request> request,
+                                     std::shared_ptr<fog_msgs::srv::Vec4::Response>                       response) {
   if (!is_initialized_) {
-    response->message = "Waypoint rejected. Node not initialized";
+    response->message = "Goto rejected, node not initialized";
     response->success = false;
-    return false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
   }
 
   if (!getting_octomap_) {
-    response->message = "Waypoint rejected. Octomap not received";
+    response->message = "Goto rejected, octomap not received";
     response->success = false;
-    return false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (!getting_control_diagnostics_) {
+    response->message = "Goto rejected, control_interface diagnostics not received";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
   }
 
   if (status_ != IDLE) {
-    response->message = "Waypoint rejected. Vehicle not IDLE";
+    response->message = "Goto rejected, vehicle not IDLE";
     response->success = false;
-    return false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
   }
 
   waypoint_in_buffer_.clear();
@@ -405,13 +437,12 @@ bool Navigation::setWaypointCallback(
   point.z() = request->goal[2];
   waypoint_in_buffer_.push_back(point);
 
-  RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint set: %.2f, %.2f, %.2f",
-              this->get_name(), point.x(), point.y(), point.z());
+  RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint set: %.2f, %.2f, %.2f", this->get_name(), point.x(), point.y(), point.z());
 
-  RCLCPP_INFO(this->get_logger(), "[%s]: Mission started", this->get_name());
+  RCLCPP_INFO(this->get_logger(), "[%s]: Planning started", this->get_name());
   status_ = PLANNING;
 
-  response->message = "Navigation goal set";
+  response->message = "Planning started";
   response->success = true;
   return true;
 }
@@ -420,172 +451,161 @@ bool Navigation::setWaypointCallback(
 /* navigationRoutine //{ */
 void Navigation::navigationRoutine(void) {
 
-  if (is_initialized_ && getting_octomap_ && getting_odometry_) {
+  if (is_initialized_ && getting_octomap_ && getting_control_diagnostics_ && getting_odometry_) {
 
     std::scoped_lock lock(status_mutex_);
 
     switch (status_) {
 
-    /* IDLE //{ */
-    case IDLE: {
-      replanning_without_motion = 0;
-      break;
-    }
-      //}
-
-    /* PLANNING //{ */
-    case PLANNING: {
-
-      std::scoped_lock lock(octree_mutex_);
-
-      if (octree_ == NULL || octree_->size() < 1) {
-        RCLCPP_WARN(this->get_logger(),
-                    "[%s]: Octomap is NULL or empty! Abort mission.",
-                    this->get_name());
-        status_ = IDLE;
+      /* IDLE //{ */
+      case IDLE: {
+        replanning_without_motion = 0;
         break;
       }
+        //}
 
-      if (waypoint_in_buffer_.empty()) {
-        RCLCPP_INFO(this->get_logger(), "[%s]: All waypoints have been visited",
-                    this->get_name());
-        status_ = IDLE;
-        break;
-      }
+      /* PLANNING //{ */
+      case PLANNING: {
 
-      octomap::point3d current_goal = waypoint_in_buffer_.front();
-      waypoint_in_buffer_.erase(waypoint_in_buffer_.begin());
-      RCLCPP_INFO(this->get_logger(),
-                  "[%s]: Waypoint [%.2f, %.2f, %.2f] set as a next goal",
-                  this->get_name(), current_goal.x(), current_goal.y(),
-                  current_goal.z());
+        std::scoped_lock lock(octree_mutex_);
 
-      visualizeGoals(waypoint_in_buffer_, current_goal);
-
-      RCLCPP_INFO(this->get_logger(), "[%s]: Generating planning tree",
-                  this->get_name());
-
-      planner->generatePlanningTree(octree_, uav_pos_,
-                                    planning_tree_resolution_);
-
-      // check if goal is in map
-      bool goal_in_map = planner->inMap(current_goal);
-
-      /* goal in map //{ */
-      if (goal_in_map) {
-        // check if the goal map cell is unoccupied
-        bool goal_valid = planner->isFree(current_goal);
-
-        /* goal valid //{ */
-        if (goal_valid) {
-          auto pathfinding_result =
-              generatePathWaypoints(uav_pos_, current_goal);
-          auto waypoints = pathfinding_result.first;
-          bool is_complete = pathfinding_result.second;
-          for (auto &w : waypoints) {
-            waypoint_out_buffer_.push_back(w);
-          }
-          if (!is_complete) {
-            waypoint_in_buffer_.push_back(current_goal);
-          }
-          auto path_srv = waypointsToPathSrv(waypoints);
-          status_ = COMMANDING;
+        if (octree_ == NULL || octree_->size() < 1) {
+          RCLCPP_WARN(this->get_logger(), "[%s]: Octomap is NULL or empty! Abort planning", this->get_name());
+          status_ = IDLE;
           break;
+        }
+
+        if (waypoint_in_buffer_.empty()) {
+          RCLCPP_INFO(this->get_logger(), "[%s]: All navigation goals have been visited", this->get_name());
+          status_ = IDLE;
+          break;
+        }
+        octomap::point3d current_goal = waypoint_in_buffer_.front();
+        waypoint_in_buffer_.erase(waypoint_in_buffer_.begin());
+        RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint [%.2f, %.2f, %.2f] set as a next goal", this->get_name(), current_goal.x(), current_goal.y(),
+                    current_goal.z());
+
+        visualizeGoals(waypoint_in_buffer_, current_goal);
+
+        RCLCPP_INFO(this->get_logger(), "[%s]: Generating planning tree", this->get_name());
+
+        planner->generatePlanningTree(octree_, uav_pos_, planning_tree_resolution_);
+
+        // check if goal is in map
+        bool goal_in_map = planner->inMap(current_goal);
+
+        /* goal in map //{ */
+        if (goal_in_map) {
+          // check if the goal map cell is unoccupied
+          bool goal_valid = planner->isFree(current_goal);
+
+          /* goal valid //{ */
+          if (goal_valid) {
+            auto pathfinding_result = generatePathWaypoints(uav_pos_, current_goal);
+            auto waypoints          = pathfinding_result.first;
+            bool is_complete        = pathfinding_result.second;
+            for (auto &w : waypoints) {
+              if ((w - uav_pos_).norm() <= replanning_distance_) {
+                waypoint_out_buffer_.push_back(w);
+              } else {
+                waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
+                break;
+              }
+            }
+            if (!is_complete) {
+              waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
+            }
+            status_ = COMMANDING;
+            break;
+          }
+          //}
+
+          /* goal not valid //{ */
+          else {
+            RCLCPP_WARN(this->get_logger(), "[%s]: Goal is in map, but the cell is unreachable", this->get_name());
+            RCLCPP_INFO(this->get_logger(), "[%s]: A nearby replacement goal will be used", this->get_name());
+            auto new_goal = planner->nearestFreeCoord(current_goal, uav_pos_);
+            waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), new_goal);
+            // first goal in input buffer is now valid
+            // planning will be executed in the next cycle
+            break;
+          }
+          //}
         }
         //}
 
-        /* goal not valid //{ */
+        /* goal not in map //{ */
         else {
-          RCLCPP_WARN(this->get_logger(),
-                      "[%s]: Goal is in map, but the cell is unreachable",
-                      this->get_name());
-          RCLCPP_INFO(this->get_logger(),
-                      "[%s]: A nearby replacement goal will be used",
-                      this->get_name());
-          auto new_goal = planner->nearestFreeCoord(current_goal, uav_pos_);
-          waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), new_goal);
-          // first goal in input buffer is now valid
-          // planning will be executed in the next cycle
-          break;
-        }
-        //}
-      }
-      //}
+          RCLCPP_INFO(this->get_logger(), "[%s]: Goal is outside of map", this->get_name());
+          auto temporary_goal    = planner->generateTemporaryGoal(uav_pos_, current_goal);
+          auto new_goal          = temporary_goal.first;
+          bool priorize_vertical = temporary_goal.second;
+          RCLCPP_INFO(this->get_logger(), "[%s]: Generated a temporary goal: [%.2f, %.2f, %.2f]", this->get_name(), new_goal.x(), new_goal.y(), new_goal.z());
 
-      /* goal not in map //{ */
-      else {
-        RCLCPP_INFO(this->get_logger(), "[%s]: Goal is outside of map",
-                    this->get_name());
-        auto temporary_goal =
-            planner->generateTemporaryGoal(uav_pos_, current_goal);
-        auto new_goal = temporary_goal.first;
-        bool priorize_vertical = temporary_goal.second;
-        RCLCPP_INFO(this->get_logger(),
-                    "[%s]: Generated a temporary goal: [%.2f, %.2f, %.2f]",
-                    this->get_name(), new_goal.x(), new_goal.y(), new_goal.z());
+          /* priorize vertical //{ */
+          if (priorize_vertical) {
+            // move up or down into unknown without planning
+            // ASSUME the environment does not change in the vertical direction
+            // This could be improved by using a 3D lidar or an upward rangefinder
+            std::vector<octomap::point3d> endpoints;
+            endpoints.push_back(uav_pos_);
+            endpoints.push_back(new_goal);
+            auto vertical_path = planner->postprocessPath(endpoints);
 
-        /* priorize vertical //{ */
-        if (priorize_vertical) {
-          // move up or down into unknown without planning
-          // ASSUME the environment does not change in the vertical direction
-          // This could be improved by using a 3D lidar or an upward rangefinder
-          waypoint_out_buffer_.push_back(uav_pos_);
-          waypoint_out_buffer_.push_back(new_goal);
+            for (auto &w : vertical_path) {
+              waypoint_out_buffer_.push_back(w);
+            }
+
+            waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
+            status_ = COMMANDING;
+            break;
+          }
+          //}
+
           waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
-          status_ = COMMANDING;
+          waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), new_goal);
           break;
         }
         //}
 
-        waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
-        waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), new_goal);
         break;
       }
       //}
 
-      break;
-    }
-    //}
+      /* COMMANDING //{ */
+      case COMMANDING: {
+        if (replanning_without_motion >= replanning_limit_) {
+          RCLCPP_ERROR(this->get_logger(),
+                       "[%s]: No waypoint produced after %d repeated attempts. "
+                       "Please provide a new waypoint");
+          status_ = IDLE;
+        }
+        if (waypoint_out_buffer_.size() < 1) {
+          RCLCPP_WARN(this->get_logger(), "[%s]: Planning did not produce any waypoints. Retrying...", this->get_name());
+          replanning_without_motion++;
+          status_ = PLANNING;
+        }
+        RCLCPP_INFO(this->get_logger(), "[%s]: Sending %ld waypoints to the control interface", this->get_name(), waypoint_out_buffer_.size());
+        visualizePath(waypoint_out_buffer_);
+        auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, false);
+        auto call_result   = waypoints_client_->async_send_request(waypoints_srv);
+        current_goal_      = waypoint_out_buffer_.back();
+        waypoint_out_buffer_.clear();
+        status_ = MOVING;
+        break;
+      }
+        //}
 
-    /* COMMANDING //{ */
-    case COMMANDING: {
-      if (replanning_without_motion >= replanning_limit_) {
-        RCLCPP_ERROR(this->get_logger(),
-                     "[%s]: No waypoint produced after %d repeated attempts. "
-                     "Please provide a new waypoint");
-        status_ = IDLE;
+        /* MOVING //{ */
+      case MOVING: {
+        replanning_without_motion = 0;
+        if (!control_moving_ && goal_reached_) {
+          RCLCPP_INFO(this->get_logger(), "[%s]: End of current segment reached", this->get_name());
+          status_ = PLANNING;
+        }
+        break;
       }
-      if (waypoint_out_buffer_.size() < 1) {
-        RCLCPP_WARN(this->get_logger(),
-                    "[%s]: Planning did not produce any waypoints. Retrying...",
-                    this->get_name());
-        replanning_without_motion++;
-        status_ = PLANNING;
-      }
-      RCLCPP_INFO(this->get_logger(),
-                  "[%s]: Sending %ld waypoints to the control interface",
-                  this->get_name(), waypoint_out_buffer_.size());
-      visualizePath(waypoint_out_buffer_);
-      auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_);
-      auto call_result = waypoints_client_->async_send_request(waypoints_srv);
-      current_goal_ = waypoint_out_buffer_.back();
-      waypoint_out_buffer_.clear();
-      status_ = MOVING;
-      break;
-    }
-      //}
-
-      /* MOVING //{ */
-    case MOVING: {
-      replanning_without_motion = 0;
-      if (goalReached(current_goal_, navigation_tolerance_)) {
-        RCLCPP_INFO(this->get_logger(), "[%s]: End of current segment reached",
-                    this->get_name());
-        status_ = PLANNING;
-      }
-      break;
-    }
-      //}
+        //}
     }
   }
 
@@ -596,53 +616,41 @@ void Navigation::navigationRoutine(void) {
 //}
 
 /* generatePathWaypoints //{ */
-std::pair<std::vector<octomap::point3d>, bool>
-Navigation::generatePathWaypoints(const octomap::point3d &start,
-                                  const octomap::point3d &end) {
+std::pair<std::vector<octomap::point3d>, bool> Navigation::generatePathWaypoints(const octomap::point3d &start, const octomap::point3d &end) {
   std::vector<octomap::point3d> waypoints;
 
   RCLCPP_INFO(this->get_logger(), "[%s]: Finding path", this->get_name());
 
-  auto pathfinding_result = planner->findPath(
-      start, end, std::bind(&Navigation::visualizeTree, this, _1),
-      std::bind(&Navigation::visualizeExpansions, this, _1, _2),
-      visualize_planner_);
+  auto pathfinding_result = planner->findPath(start, end, std::bind(&Navigation::visualizeTree, this, _1),
+                                              std::bind(&Navigation::visualizeExpansions, this, _1, _2), visualize_planner_);
 
   waypoints = pathfinding_result.first;
 
-  RCLCPP_INFO(this->get_logger(), "[%s]: Postprocessing path",
-              this->get_name());
+  RCLCPP_INFO(this->get_logger(), "[%s]: Postprocessing path", this->get_name());
   auto processed = planner->postprocessPath(waypoints);
-  RCLCPP_INFO(this->get_logger(),
-              "[%s]: Transformed %ld waypoints to %ld waypoints",
-              this->get_name(), waypoints.size(), processed.size());
+  RCLCPP_INFO(this->get_logger(), "[%s]: Transformed %ld waypoints to %ld waypoints", this->get_name(), waypoints.size(), processed.size());
   waypoints = processed;
   return {waypoints, pathfinding_result.second};
 }
 //}
 
-/* goalReached //{ */
-bool Navigation::goalReached(const octomap::point3d &goal,
-                             double dist_tolerance) {
-  const octomap::point3d uav_pos = {uav_pos_.x(), uav_pos_.y(), uav_pos_.z()};
-  return AstarPlanner::distEuclidean(uav_pos, goal) < dist_tolerance;
-}
-//}
-
 /* waypointsToPathSrv //{ */
-std::shared_ptr<fog_msgs::srv::Path::Request>
-Navigation::waypointsToPathSrv(const std::vector<octomap::point3d> waypoints) {
+std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPathSrv(const std::vector<octomap::point3d> waypoints, bool use_first) {
   nav_msgs::msg::Path msg;
-  msg.header.stamp = this->get_clock()->now();
+  msg.header.stamp    = this->get_clock()->now();
   msg.header.frame_id = parent_frame_;
-  for (auto &wp : waypoints) {
+  size_t i            = 0;
+  if (!use_first) {
+    i++;
+  }
+  for (; i < waypoints.size(); i++) {
     geometry_msgs::msg::PoseStamped p;
-    p.pose.position.x = wp.x();
-    p.pose.position.y = wp.y();
-    p.pose.position.z = wp.z();
+    p.pose.position.x = waypoints[i].x();
+    p.pose.position.y = waypoints[i].y();
+    p.pose.position.z = waypoints[i].z();
     msg.poses.push_back(p);
   }
-  auto path_srv = std::make_shared<fog_msgs::srv::Path::Request>();
+  auto path_srv  = std::make_shared<fog_msgs::srv::Path::Request>();
   path_srv->path = msg;
   return path_srv;
 }
@@ -652,34 +660,33 @@ Navigation::waypointsToPathSrv(const std::vector<octomap::point3d> waypoints) {
 
 /* visualizeTree //{ */
 void Navigation::visualizeTree(const octomap::OcTree &tree) {
-  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Visualizing tree",
-                   this->get_name());
+  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Visualizing tree", this->get_name());
   visualization_msgs::msg::Marker msg;
-  msg.header.frame_id = parent_frame_;
-  msg.header.stamp = this->get_clock()->now();
-  msg.ns = "tree";
-  msg.type = visualization_msgs::msg::Marker::POINTS;
-  msg.id = 8;
-  msg.action = visualization_msgs::msg::Marker::ADD;
+  msg.header.frame_id    = parent_frame_;
+  msg.header.stamp       = this->get_clock()->now();
+  msg.ns                 = "tree";
+  msg.type               = visualization_msgs::msg::Marker::POINTS;
+  msg.id                 = 8;
+  msg.action             = visualization_msgs::msg::Marker::ADD;
   msg.pose.orientation.w = 1.0;
-  msg.scale.x = tree_points_scale_;
-  msg.scale.y = tree_points_scale_;
+  msg.scale.x            = tree_points_scale_;
+  msg.scale.y            = tree_points_scale_;
 
   for (auto it = tree.begin(); it != tree.end(); it++) {
     if (it->getValue() == TreeValue::OCCUPIED) {
       geometry_msgs::msg::Point gp;
-      auto color = generateColor(0, 0, 0, 1.0);
-      gp.x = it.getX();
-      gp.y = it.getY();
-      gp.z = it.getZ();
+      auto                      color = generateColor(0, 0, 0, 1.0);
+      gp.x                            = it.getX();
+      gp.y                            = it.getY();
+      gp.z                            = it.getZ();
       msg.points.push_back(gp);
       msg.colors.push_back(color);
     } else if (show_unoccupied_) {
       geometry_msgs::msg::Point gp;
-      auto color = generateColor(0.7, 0.7, 0.7, 1.0);
-      gp.x = it.getX();
-      gp.y = it.getY();
-      gp.z = it.getZ();
+      auto                      color = generateColor(0.7, 0.7, 0.7, 1.0);
+      gp.x                            = it.getX();
+      gp.y                            = it.getY();
+      gp.z                            = it.getZ();
       msg.points.push_back(gp);
       msg.colors.push_back(color);
     }
@@ -689,22 +696,18 @@ void Navigation::visualizeTree(const octomap::OcTree &tree) {
 //}
 
 /* visualizeExpansions //{ */
-void Navigation::visualizeExpansions(
-    const std::set<Expansion, CostComparator> &open_list,
-    const octomap::OcTree &tree) {
-  RCLCPP_INFO_ONCE(this->get_logger(),
-                   "[%s]: Visualizing open planning expansions",
-                   this->get_name());
+void Navigation::visualizeExpansions(const std::set<Expansion, CostComparator> &open_list, const octomap::OcTree &tree) {
+  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Visualizing open planning expansions", this->get_name());
   visualization_msgs::msg::Marker msg;
-  msg.header.frame_id = parent_frame_;
-  msg.header.stamp = this->get_clock()->now();
-  msg.ns = "expansions";
-  msg.type = visualization_msgs::msg::Marker::POINTS;
-  msg.id = 8;
-  msg.action = visualization_msgs::msg::Marker::ADD;
+  msg.header.frame_id    = parent_frame_;
+  msg.header.stamp       = this->get_clock()->now();
+  msg.ns                 = "expansions";
+  msg.type               = visualization_msgs::msg::Marker::POINTS;
+  msg.id                 = 8;
+  msg.action             = visualization_msgs::msg::Marker::ADD;
   msg.pose.orientation.w = 1.0;
-  msg.scale.x = expansions_points_scale_;
-  msg.scale.y = expansions_points_scale_;
+  msg.scale.x            = expansions_points_scale_;
+  msg.scale.y            = expansions_points_scale_;
 
   double max_cost = 0;
   double min_cost = 1e6;
@@ -719,13 +722,13 @@ void Navigation::visualizeExpansions(
   }
 
   for (auto it = open_list.begin(); it != open_list.end(); it++) {
-    auto coords = tree.keyToCoord(it->key);
+    auto                      coords = tree.keyToCoord(it->key);
     geometry_msgs::msg::Point gp;
-    double brightness = (it->total_cost - min_cost) / (max_cost - min_cost);
-    auto color = generateColor(0.65, 0.2, brightness, 0.8);
-    gp.x = coords.x();
-    gp.y = coords.y();
-    gp.z = coords.z();
+    double                    brightness = (it->total_cost - min_cost) / (max_cost - min_cost);
+    auto                      color      = generateColor(0.65, 0.2, brightness, 0.8);
+    gp.x                                 = coords.x();
+    gp.y                                 = coords.y();
+    gp.z                                 = coords.z();
     msg.points.push_back(gp);
     msg.colors.push_back(color);
   }
@@ -735,28 +738,27 @@ void Navigation::visualizeExpansions(
 
 /* visualizePath //{ */
 void Navigation::visualizePath(const std::vector<octomap::point3d> waypoints) {
-  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Visualizing path",
-                   this->get_name());
+  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Visualizing path", this->get_name());
   visualization_msgs::msg::Marker msg;
-  msg.header.frame_id = parent_frame_;
-  msg.header.stamp = this->get_clock()->now();
-  msg.ns = "path";
-  msg.type = visualization_msgs::msg::Marker::LINE_STRIP;
-  msg.id = 8;
-  msg.action = visualization_msgs::msg::Marker::ADD;
+  msg.header.frame_id    = parent_frame_;
+  msg.header.stamp       = this->get_clock()->now();
+  msg.ns                 = "path";
+  msg.type               = visualization_msgs::msg::Marker::LINE_STRIP;
+  msg.id                 = 8;
+  msg.action             = visualization_msgs::msg::Marker::ADD;
   msg.pose.orientation.w = 1.0;
-  msg.scale.x = path_points_scale_;
+  msg.scale.x            = path_points_scale_;
 
   for (size_t i = 1; i < waypoints.size(); i++) {
     geometry_msgs::msg::Point p1, p2;
-    std_msgs::msg::ColorRGBA c;
+    std_msgs::msg::ColorRGBA  c;
     p1.x = waypoints[i - 1].x();
     p1.y = waypoints[i - 1].y();
     p1.z = waypoints[i - 1].z();
     p2.x = waypoints[i].x();
     p2.y = waypoints[i].y();
     p2.z = waypoints[i].z();
-    c = generateColor(0.1, double(i) / double(waypoints.size()), 0.1, 1);
+    c    = generateColor(0.1, double(i) / double(waypoints.size()), 0.1, 1);
     msg.points.push_back(p1);
     msg.points.push_back(p2);
     msg.colors.push_back(c);
@@ -767,37 +769,35 @@ void Navigation::visualizePath(const std::vector<octomap::point3d> waypoints) {
 //}
 
 /* visualizeGoals //{ */
-void Navigation::visualizeGoals(const std::vector<octomap::point3d> waypoints,
-                                const octomap::point3d current_goal) {
-  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Visualizing goals",
-                   this->get_name());
+void Navigation::visualizeGoals(const std::vector<octomap::point3d> waypoints, const octomap::point3d current_goal) {
+  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Visualizing goals", this->get_name());
   visualization_msgs::msg::Marker msg;
-  msg.header.frame_id = parent_frame_;
-  msg.header.stamp = this->get_clock()->now();
-  msg.ns = "goals";
-  msg.type = visualization_msgs::msg::Marker::POINTS;
-  msg.id = 8;
-  msg.action = visualization_msgs::msg::Marker::ADD;
+  msg.header.frame_id    = parent_frame_;
+  msg.header.stamp       = this->get_clock()->now();
+  msg.ns                 = "goals";
+  msg.type               = visualization_msgs::msg::Marker::POINTS;
+  msg.id                 = 8;
+  msg.action             = visualization_msgs::msg::Marker::ADD;
   msg.pose.orientation.w = 1.0;
-  msg.scale.x = goal_points_scale_;
-  msg.scale.y = goal_points_scale_;
+  msg.scale.x            = goal_points_scale_;
+  msg.scale.y            = goal_points_scale_;
 
   for (const auto &w : waypoints) {
     geometry_msgs::msg::Point p;
-    std_msgs::msg::ColorRGBA c = generateColor(0.2, 0.4, 0.8, 1.0);
-    p.x = w.x();
-    p.y = w.y();
-    p.z = w.z();
+    std_msgs::msg::ColorRGBA  c = generateColor(0.1, 0.3, 0.7, 1.0);
+    p.x                         = w.x();
+    p.y                         = w.y();
+    p.z                         = w.z();
     msg.points.push_back(p);
     msg.colors.push_back(c);
   }
 
   // current goal
   geometry_msgs::msg::Point p;
-  std_msgs::msg::ColorRGBA c = generateColor(0.2, 1.0, 0.2, 1.0);
-  p.x = current_goal.x();
-  p.y = current_goal.y();
-  p.z = current_goal.z();
+  std_msgs::msg::ColorRGBA  c = generateColor(0.3, 0.5, 1.0, 1.0);
+  p.x                         = current_goal.x();
+  p.y                         = current_goal.y();
+  p.z                         = current_goal.z();
   msg.points.push_back(p);
   msg.colors.push_back(c);
 
@@ -806,10 +806,7 @@ void Navigation::visualizeGoals(const std::vector<octomap::point3d> waypoints,
 //}
 
 /* generateColor//{ */
-std_msgs::msg::ColorRGBA Navigation::generateColor(const double r,
-                                                   const double g,
-                                                   const double b,
-                                                   const double a) {
+std_msgs::msg::ColorRGBA Navigation::generateColor(const double r, const double g, const double b, const double a) {
   std_msgs::msg::ColorRGBA c;
   c.r = r;
   c.g = g;
@@ -827,32 +824,23 @@ bool Navigation::parse_param(std::string param_name, T &param_dest) {
   const std::string param_path = "param_namespace." + param_name;
   this->declare_parameter(param_path);
   if (!this->get_parameter(param_path, param_dest)) {
-    RCLCPP_ERROR(this->get_logger(), "[%s]: Could not load param '%s'",
-                 this->get_name(), param_name.c_str());
+    RCLCPP_ERROR(this->get_logger(), "[%s]: Could not load param '%s'", this->get_name(), param_name.c_str());
     return false;
   } else {
-    RCLCPP_INFO_STREAM(this->get_logger(), "[" << this->get_name()
-                                               << "]: Loaded '" << param_name
-                                               << "' = '" << param_dest << "'");
+    RCLCPP_INFO_STREAM(this->get_logger(), "[" << this->get_name() << "]: Loaded '" << param_name << "' = '" << param_dest << "'");
   }
   return true;
 }
 
-template bool Navigation::parse_param<int>(std::string param_name,
-                                           int &param_dest);
-template bool Navigation::parse_param<double>(std::string param_name,
-                                              double &param_dest);
-template bool Navigation::parse_param<float>(std::string param_name,
-                                             float &param_dest);
-template bool Navigation::parse_param<std::string>(std::string param_name,
-                                                   std::string &param_dest);
-template bool Navigation::parse_param<bool>(std::string param_name,
-                                            bool &param_dest);
-template bool Navigation::parse_param<unsigned int>(std::string param_name,
-                                                    unsigned int &param_dest);
+template bool Navigation::parse_param<int>(std::string param_name, int &param_dest);
+template bool Navigation::parse_param<double>(std::string param_name, double &param_dest);
+template bool Navigation::parse_param<float>(std::string param_name, float &param_dest);
+template bool Navigation::parse_param<std::string>(std::string param_name, std::string &param_dest);
+template bool Navigation::parse_param<bool>(std::string param_name, bool &param_dest);
+template bool Navigation::parse_param<unsigned int>(std::string param_name, unsigned int &param_dest);
 //}
 
-} // namespace navigation
+}  // namespace navigation
 
 #include <rclcpp_components/register_node_macro.hpp>
 RCLCPP_COMPONENTS_REGISTER_NODE(navigation::Navigation)

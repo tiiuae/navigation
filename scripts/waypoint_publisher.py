@@ -32,6 +32,7 @@ class PathPublisherNode(Node):
         super().__init__("waypoint_publisher")
         self.publisher = self.create_publisher(NavPath, "/" + DRONE_DEVICE_ID + "/navigation/goto_waypoints", 10)
         self.client = self.create_client(SetPath, "/" + DRONE_DEVICE_ID + "/navigation/set_path")
+        # self.client = self.create_client(SetPath, "/" + DRONE_DEVICE_ID + "/control_interface/waypoints")
 
     def publish(self):
         path = Path()
@@ -82,9 +83,10 @@ def main(args=None):
     #     pythontime.sleep(0.05)
     #     rclpy.spin_once(node)
 
-    node.call_service()
     while rclpy.ok():
+        node.call_service()
         rclpy.spin_once(node)
+        pythontime.sleep(0.05)
         if node.future.done():
             try:
                 response = node.future.result()
