@@ -53,12 +53,14 @@ private:
   bool getting_control_diagnostics_ = false;
   bool visualize_planner_           = true;
   bool show_unoccupied_             = false;
+  bool override_previous_commands_  = false;
 
   std::string parent_frame_;
   int         replanning_without_motion = 0;
 
-  bool control_moving_ = false;
-  bool goal_reached_   = false;
+  bool control_moving_  = false;
+  bool goal_reached_    = false;
+  bool hover_requested_ = false;
 
   octomap::point3d                 uav_pos_;
   octomap::point3d                 current_goal_;
@@ -122,6 +124,7 @@ private:
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr goto_trigger_service_;
   rclcpp::Service<fog_msgs::srv::Path>::SharedPtr    set_path_service_;
   rclcpp::Service<fog_msgs::srv::Vec4>::SharedPtr    set_waypoint_service_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr hover_service_;
 
   rclcpp::Client<fog_msgs::srv::Path>::SharedPtr waypoints_client_;
 
@@ -129,8 +132,10 @@ private:
   bool gotoTriggerCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request, std::shared_ptr<std_srvs::srv::Trigger::Response> response);
   bool setPathCallback(const std::shared_ptr<fog_msgs::srv::Path::Request> request, std::shared_ptr<fog_msgs::srv::Path::Response> response);
   bool setWaypointCallback(const std::shared_ptr<fog_msgs::srv::Vec4::Request> request, std::shared_ptr<fog_msgs::srv::Vec4::Response> response);
+  bool hoverCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request, std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 
   std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPathSrv(std::vector<octomap::point3d> waypoints, bool use_first = true);
+  void                                          hover();
 
   AstarPlanner *planner;
 
@@ -168,6 +173,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   parse_param("planning_timeout", planning_timeout_);
   parse_param("replanning_limit", replanning_limit_);
   parse_param("replanning_distance", replanning_distance_);
+  parse_param("override_previous_commands", override_previous_commands_);
 
   parse_param("visualize_planner", visualize_planner_);
   parse_param("show_unoccupied", show_unoccupied_);
@@ -200,9 +206,14 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   goto_trigger_service_ = this->create_service<std_srvs::srv::Trigger>("~/goto_trigger_in", std::bind(&Navigation::gotoTriggerCallback, this, _1, _2));
   set_path_service_     = this->create_service<fog_msgs::srv::Path>("~/set_path_in", std::bind(&Navigation::setPathCallback, this, _1, _2));
   set_waypoint_service_ = this->create_service<fog_msgs::srv::Vec4>("~/waypoint_in", std::bind(&Navigation::setWaypointCallback, this, _1, _2));
+  hover_service_        = this->create_service<std_srvs::srv::Trigger>("~/hover_in", std::bind(&Navigation::hoverCallback, this, _1, _2));
 
   // timers
   execution_timer_ = this->create_wall_timer(std::chrono::duration<double>(1.0 / 10.0), std::bind(&Navigation::navigationRoutine, this), callback_group_);
+
+  if (max_waypoint_distance_ <= 0) {
+    max_waypoint_distance_ = replanning_distance_;
+  }
 
   planner = new AstarPlanner(safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_,
                              vertical_penalty_, unknown_is_occupied_, navigation_tolerance_, max_waypoint_distance_, planning_timeout_);
@@ -274,14 +285,19 @@ void Navigation::gotoCallback(const nav_msgs::msg::Path::UniquePtr msg) {
     return;
   }
 
-  if (status_ != IDLE) {
-    RCLCPP_ERROR(this->get_logger(), "[%s]: Goto rejected, vehicle not IDLE", this->get_name());
-    return;
-  }
-
   if (msg->poses.empty()) {
     RCLCPP_ERROR(this->get_logger(), "[%s]: Goto rejected, path input does not contain any waypoints", this->get_name());
     return;
+  }
+
+  if (status_ != IDLE) {
+    if (!override_previous_commands_) {
+      RCLCPP_ERROR(this->get_logger(), "[%s]: Goto rejected, vehicle not IDLE", this->get_name());
+      return;
+    } else {
+      RCLCPP_INFO(this->get_logger(), "[%s]: Override previous navigation commands", this->get_name());
+      hover();
+    }
   }
 
   RCLCPP_INFO(this->get_logger(), "[%s]: Recieved %ld waypoints", this->get_name(), msg->poses.size());
@@ -322,18 +338,21 @@ bool Navigation::gotoTriggerCallback([[maybe_unused]] const std::shared_ptr<std_
     return true;
   }
 
-  if (status_ != IDLE) {
-    response->message = "Goto rejected, vehicle not IDLE";
-    response->success = false;
-    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
-    return true;
-  }
-
   if (waypoint_in_buffer_.empty()) {
     response->message = "Goto rejected, no waypoint provided";
     response->success = false;
     RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
     return true;
+  }
+
+  if (status_ != IDLE) {
+    if (!override_previous_commands_) {
+      RCLCPP_ERROR(this->get_logger(), "[%s]: Goto rejected, vehicle not IDLE", this->get_name());
+      return true;
+    } else {
+      RCLCPP_INFO(this->get_logger(), "[%s]: Override previous navigation commands", this->get_name());
+      hover();
+    }
   }
 
   response->message = "Planning started";
@@ -368,18 +387,23 @@ bool Navigation::setPathCallback([[maybe_unused]] const std::shared_ptr<fog_msgs
     return true;
   }
 
-  if (status_ != IDLE) {
-    response->message = "Path rejected, vehicle not IDLE";
-    response->success = false;
-    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
-    return true;
-  }
-
   if (request->path.poses.empty()) {
     response->message = "Path rejected, path input does not contain any waypoints";
     response->success = false;
     RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
     return true;
+  }
+
+  if (status_ != IDLE) {
+    if (!override_previous_commands_) {
+      response->message = "Path rejected, vehicle not IDLE";
+      response->success = false;
+      RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+      return true;
+    } else {
+      RCLCPP_INFO(this->get_logger(), "[%s]: Override previous navigation commands", this->get_name());
+      hover();
+    }
   }
 
   waypoint_in_buffer_.clear();
@@ -424,10 +448,15 @@ bool Navigation::setWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_
   }
 
   if (status_ != IDLE) {
-    response->message = "Goto rejected, vehicle not IDLE";
-    response->success = false;
-    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
-    return true;
+    if (!override_previous_commands_) {
+      response->message = "Goto rejected, vehicle not IDLE";
+      response->success = false;
+      RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+      return true;
+    } else {
+      RCLCPP_INFO(this->get_logger(), "[%s]: Override previous navigation commands", this->get_name());
+      hover();
+    }
   }
 
   waypoint_in_buffer_.clear();
@@ -448,6 +477,38 @@ bool Navigation::setWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_
 }
 //}
 
+/* hoverCallback //{ */
+bool Navigation::hoverCallback([[maybe_unused]] const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                               std::shared_ptr<std_srvs::srv::Trigger::Response>                       response) {
+  if (!is_initialized_) {
+    response->message = "Hover rejected, node not initialized";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (!getting_control_diagnostics_) {
+    response->message = "Hover rejected, control_interface diagnostics not received";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (status_ == IDLE) {
+    response->message = "Hover not necessary, vehicle is IDLE";
+    response->success = false;
+    RCLCPP_WARN(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  hover_requested_  = true;
+  response->message = "Navigation stopped. Hovering";
+  response->success = true;
+  RCLCPP_INFO(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+  return true;
+}
+//}
+
 /* navigationRoutine //{ */
 void Navigation::navigationRoutine(void) {
 
@@ -459,6 +520,7 @@ void Navigation::navigationRoutine(void) {
 
       /* IDLE //{ */
       case IDLE: {
+        hover_requested_          = false;
         replanning_without_motion = 0;
         break;
       }
@@ -466,6 +528,11 @@ void Navigation::navigationRoutine(void) {
 
       /* PLANNING //{ */
       case PLANNING: {
+        if (hover_requested_) {
+          hover();
+          status_ = IDLE;
+          break;
+        }
 
         std::scoped_lock lock(octree_mutex_);
 
@@ -574,6 +641,12 @@ void Navigation::navigationRoutine(void) {
 
       /* COMMANDING //{ */
       case COMMANDING: {
+        if (hover_requested_) {
+          hover();
+          status_ = IDLE;
+          break;
+        }
+
         if (replanning_without_motion >= replanning_limit_) {
           RCLCPP_ERROR(this->get_logger(),
                        "[%s]: No waypoint produced after %d repeated attempts. "
@@ -598,6 +671,11 @@ void Navigation::navigationRoutine(void) {
 
         /* MOVING //{ */
       case MOVING: {
+        if (hover_requested_) {
+          hover();
+          status_ = IDLE;
+          break;
+        }
         replanning_without_motion = 0;
         if (!control_moving_ && goal_reached_) {
           RCLCPP_INFO(this->get_logger(), "[%s]: End of current segment reached", this->get_name());
@@ -641,18 +719,30 @@ std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPathSrv(con
   msg.header.frame_id = parent_frame_;
   size_t i            = 0;
   if (!use_first) {
-    i++;
+    ++i;
   }
-  for (; i < waypoints.size(); i++) {
+  while (i < waypoints.size()) {
     geometry_msgs::msg::PoseStamped p;
     p.pose.position.x = waypoints[i].x();
     p.pose.position.y = waypoints[i].y();
     p.pose.position.z = waypoints[i].z();
     msg.poses.push_back(p);
+    i++;
   }
   auto path_srv  = std::make_shared<fog_msgs::srv::Path::Request>();
   path_srv->path = msg;
   return path_srv;
+}
+//}
+
+/* hover //{ */
+void Navigation::hover() {
+  waypoint_in_buffer_.clear();
+  waypoint_out_buffer_.clear();
+  waypoint_out_buffer_.push_back(uav_pos_);
+  auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, true);
+  auto call_result   = waypoints_client_->async_send_request(waypoints_srv);
+  waypoint_out_buffer_.clear();
 }
 //}
 

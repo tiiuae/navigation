@@ -40,6 +40,7 @@ def generate_launch_description():
                     ("~/octomap_in", "/" + DRONE_DEVICE_ID + "/octomap_server/octomap_full"),
                     ("~/odometry_in", "/" + DRONE_DEVICE_ID + "/control_interface/local_odom"),
                     ("~/waypoints_out", "/" + DRONE_DEVICE_ID + "/control_interface/waypoints"),
+                    ("~/hover_in", "~/hover"),
                     ("~/goto_in", "~/goto_waypoints"),
                     ("~/goto_trigger_in", "~/goto_start"),
                     ("~/set_path_in", "~/set_path"),

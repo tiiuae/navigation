@@ -9,10 +9,11 @@ param_namespace:
   greedy_penalty: 1.0
   vertical_penalty: 2.0
   planning_tree_resolution: 0.4
-  max_waypoint_distance: 2.0 # [m]
+  max_waypoint_distance: 3.0 # [m] // or set negative to allow maximal segment length
   planning_timeout: 3.5 # [s]
   replanning_limit: 3 # number of repeated attempts
   replanning_distance: 7.0 # [m] Euclidean distance from first waypoint
+  override_previous_commands: true # new GOTO will override all previous actions
 
   # visualization
   visualize_planner: true
