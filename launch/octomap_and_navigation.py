@@ -13,7 +13,7 @@ def generate_launch_description():
 
     ld = launch.LaunchDescription()
 
-    pkg_name = "fog_core"
+    pkg_name = "navigation"
     pkg_share_path = get_package_share_directory(package_name=pkg_name)
     
     navigation_path = get_package_share_directory(package_name="navigation")
