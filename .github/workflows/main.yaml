@@ -61,13 +61,14 @@ jobs:
           jfrog rt c import "$ARTIFACTORY_TOKEN"
           jfrog rt ping
           pkg=$(find bin -name 'ros-foxy-navigation*.deb')
+          build_id="$GITHUB_SHA-$GITHUB_RUN_NUMBER"
           jfrog rt u --deb "$DISTRIBUTION/$COMPONENT/$ARCHITECTURE" \
                      --target-props COMMIT="$GITHUB_SHA" \
                      --build-name "$BUILD_NAME" \
-                     --build-number "$GITHUB_SHA_$GITHUB_RUN_NUMBER" \
+                     --build-number "$build_id" \
                      "$pkg" \
                      "$ARTIFACTORY_REPO"
-          jfrog rt build-publish "$BUILD_NAME" "$GITHUB_SHA"
-          jfrog rt bpr "$BUILD_NAME" "$GITHUB_SHA" "$ARTIFACTORY_REPO" \
+          jfrog rt build-publish "$BUILD_NAME" "$build_id"
+          jfrog rt bpr "$BUILD_NAME" "$build_id" "$ARTIFACTORY_REPO" \
                        --status dev \
                        --comment "development build"
