@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-## Debug script for easy waypoint publishing
+## Debug script for easier nav_msgs.msg.Path publishing
 
 import os
 import numpy as np
@@ -16,11 +16,19 @@ from fog_msgs.srv import Path as SetPath
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
 
-WAYPOINTS=[
+WAYPOINTS_LOCAL=[
     [0,0,3],
     [-5,4,2],
     [7,-5,2],
     [0,0,2]
+]
+
+WAYPOINTS_GPS=[
+    [47.397708, 8.5456038, 4],
+    [47.3977, 8.5456038, 2],
+    [47.39775, 8.5456, 2],
+    [47.39758, 8.545706, 1.5],
+    [47.397708, 8.5456038, 2]
 ]
 
 class PathPublisherNode(Node):
@@ -30,9 +38,8 @@ class PathPublisherNode(Node):
         DRONE_DEVICE_ID = os.getenv('DRONE_DEVICE_ID')
 
         super().__init__("waypoint_publisher")
-        self.publisher = self.create_publisher(NavPath, "/" + DRONE_DEVICE_ID + "/navigation/goto_waypoints", 10)
-        self.client = self.create_client(SetPath, "/" + DRONE_DEVICE_ID + "/navigation/set_path")
-        # self.client = self.create_client(SetPath, "/" + DRONE_DEVICE_ID + "/control_interface/waypoints")
+        self.client_local = self.create_client(SetPath, "/" + DRONE_DEVICE_ID + "/navigation/local_path")
+        self.client_gps = self.create_client(SetPath, "/" + DRONE_DEVICE_ID + "/navigation/gps_path")
 
     def publish(self):
         path = Path()
@@ -52,12 +59,13 @@ class PathPublisherNode(Node):
         print('Publishing: "%s"' % path.poses)
         self.publisher.publish(path)
 
-    def call_service(self):
+    # #{ call_service_local
+    def call_service_local(self):
         path = NavPath()
         path.header.stamp = rclpy.clock.Clock().now().to_msg()
         path.header.frame_id = "world"
 
-        for wp in WAYPOINTS:
+        for wp in WAYPOINTS_LOCAL:
             pose = PoseStamped()
             pose.header.stamp = path.header.stamp
             pose.header.frame_id = "world"
@@ -67,26 +75,44 @@ class PathPublisherNode(Node):
             point.z = float(wp[2])
             pose.pose.position = point
             path.poses.append(pose)
-        print('Calling service : "%s"' % self.client.srv_name)
+        print('Calling service : "%s"' % self.client_local.srv_name)
         path_req = SetPath.Request()
         path_req.path = path
-        self.future = self.client.call_async(path_req)
+        self.future = self.client_local.call_async(path_req)
+    # #}
+    
+    # #{ call_service_gps
+    def call_service_gps(self):
+        path = NavPath()
+        path.header.stamp = rclpy.clock.Clock().now().to_msg()
+        path.header.frame_id = "world"
+
+        for wp in WAYPOINTS_GPS:
+            pose = PoseStamped()
+            pose.header.stamp = path.header.stamp
+            pose.header.frame_id = "world"
+            point = Point()
+            point.x = float(wp[0])
+            point.y = float(wp[1])
+            point.z = float(wp[2])
+            pose.pose.position = point
+            path.poses.append(pose)
+        print('Calling service : "%s"' % self.client_gps.srv_name)
+        path_req = SetPath.Request()
+        path_req.path = path
+        self.future = self.client_gps.call_async(path_req)
+    # #}
 
 def main(args=None):
     rclpy.init(args=args)
     node = PathPublisherNode()
 
-    # rate = node.create_rate(30)
-    # call the publisher a few times just to make sure
-    # for i in range(30):
-    #     node.publish()
-    #     pythontime.sleep(0.05)
-    #     rclpy.spin_once(node)
+    rate = node.create_rate(0.1)
+    node.call_service_gps()
+    # node.call_service_local()
 
     while rclpy.ok():
-        node.call_service()
         rclpy.spin_once(node)
-        pythontime.sleep(0.05)
         if node.future.done():
             try:
                 response = node.future.result()
@@ -103,6 +129,11 @@ def main(args=None):
                         'Service FAILED with response "%s"' %
                         (response.message))
             break
+
+        node.call_service_gps()
+        # node.call_service_local()
+        rate.sleep()
+
     node.destroy_node()
     rclpy.shutdown()
 

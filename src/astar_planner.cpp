@@ -138,7 +138,6 @@ std::pair<std::vector<octomap::point3d>, bool> AstarPlanner::findPath(
     auto neighbors = getNeighborhood(current.key, *binary_tree);
 
     for (auto &nkey : neighbors) {
-      auto      ncoord = binary_tree->keyToCoord(nkey);
       Expansion n;
       n.key = nkey;
       // check if open
@@ -202,7 +201,7 @@ std::vector<octomap::point3d> AstarPlanner::postprocessPath(const std::vector<oc
   size_t                        waypoints_size = waypoints.size();
 
   /* padding with additional points if the distances exceed threshold //{ */
-  for (int i = 1; i < waypoints_size; i++) {
+  for (size_t i = 1; i < waypoints_size; i++) {
     if (distEuclidean(padded[i], padded[i - 1]) > max_waypoint_distance) {
       auto direction = (padded[i] - padded[i - 1]).normalized() * max_waypoint_distance;
       padded.insert(padded.begin() + i, padded[i - 1] + direction);
@@ -220,7 +219,7 @@ std::vector<octomap::point3d> AstarPlanner::postprocessPath(const std::vector<oc
 
   /* removing obsolete points //{ */
   filtered.push_back(padded.front());
-  int i = 2;
+  size_t i = 2;
   while (i < padded.size()) {
     if (!freeStraightPath(filtered.back(), padded[i], max_waypoint_distance)) {
       filtered.push_back(padded[i - 1]);
@@ -265,12 +264,9 @@ std::vector<octomap::OcTreeKey> AstarPlanner::getNeighborhood(const octomap::OcT
 //}
 
 /* expand //{ */
-octomap::OcTreeKey AstarPlanner::expand(const octomap::OcTreeKey &key, const octomap::point3d &direction, const octomap::OcTree &tree) {
-  auto prev_node = tree.search(key);
+octomap::OcTreeKey AstarPlanner::expand(const octomap::OcTreeKey &key, const octomap::point3d &direction, [[maybe_unused]] const octomap::OcTree &tree) {
 
   octomap::OcTreeKey k;
-  int                i = 1;
-
   k.k[0] = key.k[0] + direction.x();
   k.k[1] = key.k[1] + direction.y();
   k.k[2] = key.k[2] + direction.z();
@@ -430,7 +426,6 @@ octomap::point3d AstarPlanner::nearestFreeCoord(const octomap::point3d &p, const
   // no free neighbor -> try a point closer to UAV
   octomap::point3d dir_to_uav;
   dir_to_uav = (uav_pos - p).normalized() * binary_tree->getResolution();
-  auto new_p = p + dir_to_uav;
   return nearestFreeCoord(p + dir_to_uav, uav_pos);
 }
 //}
