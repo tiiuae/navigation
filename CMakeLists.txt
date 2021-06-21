@@ -28,9 +28,9 @@ find_package(dynamicEDT3D REQUIRED)
 
 include_directories(
   include
-  # ${rclcpp_INCLUDE_DIRS}
-  # ${OCTOMAP_INCLUDE_DIRS}
-  # ${DYNAMICEDT3D_INCLUDE_DIRS}
+  ${rclcpp_INCLUDE_DIRS}
+  ${OCTOMAP_INCLUDE_DIRS}
+  ${DYNAMICEDT3D_INCLUDE_DIRS}
 )
 
 ## --------------------------------------------------------------
