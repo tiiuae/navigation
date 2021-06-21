@@ -5,6 +5,12 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+add_definitions("-Wall")
+add_definitions("-Wextra")
+add_definitions("-Wpedantic")
+add_definitions("-g")
+add_definitions("-O3")
+
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
@@ -20,14 +26,11 @@ find_package(octomap REQUIRED)
 find_package(octomap_msgs REQUIRED)
 find_package(dynamicEDT3D REQUIRED)
 
-find_package(Eigen3 REQUIRED)
-set(Eigen_INCLUDE_DIRS ${EIGEN3_INCLUDE_DIRS})
-set(Eigen_LIBRARIES ${EIGEN3_LIBRARIES})
-
 include_directories(
   include
   ${rclcpp_INCLUDE_DIRS}
-  ${EIGEN3_INCLUDE_DIRS}
+  ${OCTOMAP_INCLUDE_DIRS}
+  ${DYNAMICEDT3D_INCLUDE_DIRS}
 )
 
 ## --------------------------------------------------------------
@@ -38,7 +41,7 @@ include_directories(
 add_library(navigation SHARED
   src/navigation.cpp
   src/astar_planner.cpp
-  )
+)
 
 target_compile_definitions(navigation
   PRIVATE "${PROJECT_NAME}_BUILDING_DLL")
@@ -57,7 +60,7 @@ ament_target_dependencies(navigation
   octomap
   octomap_msgs
   dynamicEDT3D
-  )
+)
 
 target_link_libraries(navigation ${OCTOMAP_LIBRARIES} ${DYNAMICEDT3D_LIBRARIES})
 rclcpp_components_register_nodes(navigation PLUGIN "${PROJECT_NAME}::Navigation" EXECUTABLE navigation)
@@ -73,18 +76,25 @@ install(TARGETS
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
-  )
+  # DESTINATION lib/${PROJECT_NAME}
+)
+
+ament_export_include_directories(include)
+
+# install(DIRECTORY include
+#   DESTINATION include
+# )
 
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
-  )
+)
 
 install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
-  )
+)
 
 install(DIRECTORY scripts
   DESTINATION lib/${PROJECT_NAME}
-  )
+)
 
 ament_package()

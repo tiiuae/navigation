@@ -19,7 +19,6 @@
   <depend>builtin_interfaces</depend>
 
   <depend>nav_msgs</depend>
-
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
   <depend>fog_msgs</depend>
@@ -30,7 +29,6 @@
   <depend>octomap</depend>
   <depend>octomap_msgs</depend>
   <depend>dynamicEDT3D</depend>
-
 
   <export>
     <build_type>ament_cmake</build_type>

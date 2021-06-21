@@ -1,8 +1,9 @@
-#include <eigen3/Eigen/Core>
 #include <fog_msgs/srv/path.hpp>
 #include <fog_msgs/srv/vec4.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <future>
 #include <mutex>
+#include <sstream>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <navigation/astar_planner.hpp>
@@ -13,6 +14,7 @@
 #include <octomap_msgs/msg/octomap.hpp>
 #include <octomap_msgs/srv/bounding_box_query.hpp>
 #include <octomap_msgs/srv/get_octomap.hpp>
+#include <rclcpp/duration.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/service.hpp>
 #include <rclcpp/subscription_base.hpp>
@@ -24,6 +26,8 @@
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <fog_msgs/msg/control_interface_diagnostics.hpp>
+#include <fog_msgs/srv/waypoint_to_local.hpp>
+#include <fog_msgs/srv/path_to_local.hpp>
 
 using namespace std::placeholders;
 
@@ -83,6 +87,8 @@ private:
   double navigation_tolerance_;
   bool   unknown_is_occupied_;
   double min_altitude_;
+  double max_altitude_;
+  double max_goal_distance_;
   double distance_penalty_;
   double greedy_penalty_;
   double vertical_penalty_;
@@ -122,20 +128,32 @@ private:
 
   // services provided
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr goto_trigger_service_;
-  rclcpp::Service<fog_msgs::srv::Path>::SharedPtr    set_path_service_;
-  rclcpp::Service<fog_msgs::srv::Vec4>::SharedPtr    set_waypoint_service_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr hover_service_;
 
-  rclcpp::Client<fog_msgs::srv::Path>::SharedPtr waypoints_client_;
+  rclcpp::Service<fog_msgs::srv::Vec4>::SharedPtr local_waypoint_service_;
+  rclcpp::Service<fog_msgs::srv::Path>::SharedPtr local_path_service_;
+  rclcpp::Service<fog_msgs::srv::Vec4>::SharedPtr gps_waypoint_service_;
+  rclcpp::Service<fog_msgs::srv::Path>::SharedPtr gps_path_service_;
+
+
+  rclcpp::Client<fog_msgs::srv::Path>::SharedPtr            local_path_client_;
+  rclcpp::Client<fog_msgs::srv::Path>::SharedPtr            gps_path_client_;
+  rclcpp::Client<fog_msgs::srv::WaypointToLocal>::SharedPtr waypoint_to_local_client_;
+  rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedPtr     path_to_local_client_;
 
   // service callbacks
   bool gotoTriggerCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request, std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-  bool setPathCallback(const std::shared_ptr<fog_msgs::srv::Path::Request> request, std::shared_ptr<fog_msgs::srv::Path::Response> response);
-  bool setWaypointCallback(const std::shared_ptr<fog_msgs::srv::Vec4::Request> request, std::shared_ptr<fog_msgs::srv::Vec4::Response> response);
   bool hoverCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request, std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 
-  std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPathSrv(std::vector<octomap::point3d> waypoints, bool use_first = true);
-  void                                          hover();
+  bool localWaypointCallback(const std::shared_ptr<fog_msgs::srv::Vec4::Request> request, std::shared_ptr<fog_msgs::srv::Vec4::Response> response);
+  bool localPathCallback(const std::shared_ptr<fog_msgs::srv::Path::Request> request, std::shared_ptr<fog_msgs::srv::Path::Response> response);
+  bool gpsWaypointCallback(const std::shared_ptr<fog_msgs::srv::Vec4::Request> request, std::shared_ptr<fog_msgs::srv::Vec4::Response> response);
+  bool gpsPathCallback(const std::shared_ptr<fog_msgs::srv::Path::Request> request, std::shared_ptr<fog_msgs::srv::Path::Response> response);
+
+  // future callback
+  bool waypointFutureCallback(rclcpp::Client<fog_msgs::srv::WaypointToLocal>::SharedFuture future);
+  bool pathFutureCallback(rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedFuture future);
+
 
   AstarPlanner *planner;
 
@@ -148,6 +166,8 @@ private:
   std_msgs::msg::ColorRGBA generateColor(const double r, const double g, const double b, const double a);
 
   std::pair<std::vector<octomap::point3d>, bool> generatePathWaypoints(const octomap::point3d &start, const octomap::point3d &end);
+  std::shared_ptr<fog_msgs::srv::Path::Request>  waypointsToPathSrv(std::vector<octomap::point3d> waypoints, bool use_first = true);
+  void                                           hover();
 
   template <class T>
   bool parse_param(std::string param_name, T &param_dest);
@@ -165,11 +185,13 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   parse_param("unknown_is_occupied", unknown_is_occupied_);
   parse_param("navigation_tolerance", navigation_tolerance_);
   parse_param("min_altitude", min_altitude_);
+  parse_param("max_altitude", max_altitude_);
+  parse_param("max_goal_distance", max_goal_distance_);
   parse_param("distance_penalty", distance_penalty_);
   parse_param("greedy_penalty", greedy_penalty_);
   parse_param("vertical_penalty", vertical_penalty_);
   parse_param("planning_tree_resolution", planning_tree_resolution_);
-  parse_param("max_waypoint_distance", max_waypoint_distance_);
+  parse_param("max _waypoint_distance", max_waypoint_distance_);
   parse_param("planning_timeout", planning_timeout_);
   parse_param("replanning_limit", replanning_limit_);
   parse_param("replanning_distance", replanning_distance_);
@@ -183,6 +205,8 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   parse_param("path_points_scale", path_points_scale_);
   parse_param("goal_points_scale", goal_points_scale_);
   //}
+
+  callback_group_ = this->create_callback_group(rclcpp::callback_group::CallbackGroupType::Reentrant);
 
   // publishers
   field_publisher_       = this->create_publisher<visualization_msgs::msg::Marker>("~/field_markers_out", 1);
@@ -200,13 +224,18 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
       "~/control_diagnostics_in", 1, std::bind(&Navigation::controlDiagnosticsCallback, this, _1));
 
   // clients
-  waypoints_client_ = this->create_client<fog_msgs::srv::Path>("~/waypoints_out");
+  local_path_client_        = this->create_client<fog_msgs::srv::Path>("~/local_path_out");
+  gps_path_client_          = this->create_client<fog_msgs::srv::Path>("~/gps_path_out");
+  waypoint_to_local_client_ = this->create_client<fog_msgs::srv::WaypointToLocal>("~/waypoint_to_local_out");
+  path_to_local_client_     = this->create_client<fog_msgs::srv::PathToLocal>("~/path_to_local_out");
 
   // service handlers
-  goto_trigger_service_ = this->create_service<std_srvs::srv::Trigger>("~/goto_trigger_in", std::bind(&Navigation::gotoTriggerCallback, this, _1, _2));
-  set_path_service_     = this->create_service<fog_msgs::srv::Path>("~/set_path_in", std::bind(&Navigation::setPathCallback, this, _1, _2));
-  set_waypoint_service_ = this->create_service<fog_msgs::srv::Vec4>("~/waypoint_in", std::bind(&Navigation::setWaypointCallback, this, _1, _2));
-  hover_service_        = this->create_service<std_srvs::srv::Trigger>("~/hover_in", std::bind(&Navigation::hoverCallback, this, _1, _2));
+  goto_trigger_service_   = this->create_service<std_srvs::srv::Trigger>("~/goto_trigger_in", std::bind(&Navigation::gotoTriggerCallback, this, _1, _2));
+  hover_service_          = this->create_service<std_srvs::srv::Trigger>("~/hover_in", std::bind(&Navigation::hoverCallback, this, _1, _2));
+  local_waypoint_service_ = this->create_service<fog_msgs::srv::Vec4>("~/local_waypoint_in", std::bind(&Navigation::localWaypointCallback, this, _1, _2));
+  local_path_service_     = this->create_service<fog_msgs::srv::Path>("~/local_path_in", std::bind(&Navigation::localPathCallback, this, _1, _2));
+  gps_waypoint_service_   = this->create_service<fog_msgs::srv::Vec4>("~/gps_waypoint_in", std::bind(&Navigation::gpsWaypointCallback, this, _1, _2));
+  gps_path_service_       = this->create_service<fog_msgs::srv::Path>("~/gps_path_in", std::bind(&Navigation::gpsPathCallback, this, _1, _2));
 
   // timers
   execution_timer_ = this->create_wall_timer(std::chrono::duration<double>(1.0 / 10.0), std::bind(&Navigation::navigationRoutine, this), callback_group_);
@@ -363,9 +392,9 @@ bool Navigation::gotoTriggerCallback([[maybe_unused]] const std::shared_ptr<std_
 }
 //}
 
-/* setPathCallback //{ */
-bool Navigation::setPathCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Path::Request> request,
-                                 std::shared_ptr<fog_msgs::srv::Path::Response>                       response) {
+/* localPathCallback //{ */
+bool Navigation::localPathCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Path::Request> request,
+                                   std::shared_ptr<fog_msgs::srv::Path::Response>                       response) {
   if (!is_initialized_) {
     response->message = "Path rejected, node not initialized";
     response->success = false;
@@ -423,9 +452,63 @@ bool Navigation::setPathCallback([[maybe_unused]] const std::shared_ptr<fog_msgs
 }
 //}
 
-/* setWaypointCallback //{ */
-bool Navigation::setWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Vec4::Request> request,
-                                     std::shared_ptr<fog_msgs::srv::Vec4::Response>                       response) {
+/* gpsPathCallback //{ */
+bool Navigation::gpsPathCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Path::Request> request,
+                                 std::shared_ptr<fog_msgs::srv::Path::Response>                       response) {
+  if (!is_initialized_) {
+    response->message = "Path rejected, node not initialized";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (!getting_octomap_) {
+    response->message = "Path rejected, octomap not received";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (!getting_control_diagnostics_) {
+    response->message = "Path rejected, control_interface diagnostics not received";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (request->path.poses.empty()) {
+    response->message = "Path rejected, path input does not contain any waypoints";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (status_ != IDLE) {
+    if (!override_previous_commands_) {
+      response->message = "Path rejected, vehicle not IDLE";
+      response->success = false;
+      RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+      return true;
+    } else {
+      RCLCPP_INFO(this->get_logger(), "[%s]: Override previous navigation commands", this->get_name());
+      hover();
+    }
+  }
+
+  auto convert_path_srv  = std::make_shared<fog_msgs::srv::PathToLocal::Request>();
+  convert_path_srv->path = request->path;
+  RCLCPP_INFO(this->get_logger(), "[%s]: Calling Path transform", this->get_name());
+  auto call_result = path_to_local_client_->async_send_request(convert_path_srv, std::bind(&Navigation::pathFutureCallback, this, std::placeholders::_1));
+
+  response->message = "Processing path";
+  response->success = true;
+  return true;
+}
+//}
+
+/* localWaypointCallback //{ */
+bool Navigation::localWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Vec4::Request> request,
+                                       std::shared_ptr<fog_msgs::srv::Vec4::Response>                       response) {
   if (!is_initialized_) {
     response->message = "Goto rejected, node not initialized";
     response->success = false;
@@ -472,6 +555,58 @@ bool Navigation::setWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_
   status_ = PLANNING;
 
   response->message = "Planning started";
+  response->success = true;
+  return true;
+}
+//}
+
+/* gpsWaypointCallback //{ */
+bool Navigation::gpsWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Vec4::Request> request,
+                                     std::shared_ptr<fog_msgs::srv::Vec4::Response>                       response) {
+  if (!is_initialized_) {
+    response->message = "Goto rejected, node not initialized";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (!getting_octomap_) {
+    response->message = "Goto rejected, octomap not received";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (!getting_control_diagnostics_) {
+    response->message = "Goto rejected, control_interface diagnostics not received";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (status_ != IDLE) {
+    if (!override_previous_commands_) {
+      response->message = "Goto rejected, vehicle not IDLE";
+      response->success = false;
+      RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+      return true;
+    } else {
+      RCLCPP_INFO(this->get_logger(), "[%s]: Override previous navigation commands", this->get_name());
+      hover();
+    }
+  }
+
+  RCLCPP_INFO(this->get_logger(), "[%s]: Creating coord transform request", this->get_name());
+  auto waypoint_convert_srv                 = std::make_shared<fog_msgs::srv::WaypointToLocal::Request>();
+  waypoint_convert_srv->latitude_deg        = request->goal[0];
+  waypoint_convert_srv->longitude_deg       = request->goal[1];
+  waypoint_convert_srv->relative_altitude_m = request->goal[2];
+  RCLCPP_INFO(this->get_logger(), "[%s]: Calling coord transform", this->get_name());
+  auto call_result =
+      waypoint_to_local_client_->async_send_request(waypoint_convert_srv, std::bind(&Navigation::waypointFutureCallback, this, std::placeholders::_1));
+
+
+  response->message = "Processing goto";
   response->success = true;
   return true;
 }
@@ -661,7 +796,7 @@ void Navigation::navigationRoutine(void) {
         RCLCPP_INFO(this->get_logger(), "[%s]: Sending %ld waypoints to the control interface", this->get_name(), waypoint_out_buffer_.size());
         visualizePath(waypoint_out_buffer_);
         auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, false);
-        auto call_result   = waypoints_client_->async_send_request(waypoints_srv);
+        auto call_result   = local_path_client_->async_send_request(waypoints_srv);
         current_goal_      = waypoint_out_buffer_.back();
         waypoint_out_buffer_.clear();
         status_ = MOVING;
@@ -741,8 +876,96 @@ void Navigation::hover() {
   waypoint_out_buffer_.clear();
   waypoint_out_buffer_.push_back(uav_pos_);
   auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, true);
-  auto call_result   = waypoints_client_->async_send_request(waypoints_srv);
+  auto call_result   = local_path_client_->async_send_request(waypoints_srv);
   waypoint_out_buffer_.clear();
+}
+//}
+
+/* waypointFutureCallback //{ */
+bool Navigation::waypointFutureCallback(rclcpp::Client<fog_msgs::srv::WaypointToLocal>::SharedFuture future) {
+  std::shared_ptr<fog_msgs::srv::WaypointToLocal_Response> result = future.get();
+
+  if (result->success) {
+    RCLCPP_INFO(this->get_logger(), "[%s]: Coordinate transform returned: %.2f, %.2f", this->get_name(), result->local_x, result->local_y);
+
+    octomap::point3d point;
+    point.x() = result->local_x;
+    point.y() = result->local_y;
+    point.z() = result->local_z;
+
+    if (point.z() < min_altitude_) {
+      RCLCPP_WARN(this->get_logger(), "[%s]: Goal Z coordinate (%.2f) is below the minimum allowed altitude (%.2f)", this->get_name(), point.z(),
+                  min_altitude_);
+      return false;
+    }
+
+    if (point.z() > max_altitude_) {
+      RCLCPP_WARN(this->get_logger(), "[%s]: Goal Z coordinate (%.2f) is above the maximum allowed altitude (%.2f)", this->get_name(), point.z(),
+                  max_altitude_);
+      return false;
+    }
+
+    if ((point - uav_pos_).norm() > max_goal_distance_) {
+      RCLCPP_WARN(this->get_logger(), "[%s]: Distance to goal (%.2f) exceeds the maximum allowed distance (%.2f m)", this->get_name(),
+                  (point - uav_pos_).norm(), max_goal_distance_);
+      return false;
+    }
+
+    waypoint_in_buffer_.push_back(point);
+
+    RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint added (LOCAL): %.2f, %.2f, %.2f", this->get_name(), point.x(), point.y(), point.z());
+
+    RCLCPP_INFO(this->get_logger(), "[%s]: Planning started", this->get_name());
+    status_ = PLANNING;
+
+    return true;
+  }
+  return false;
+}
+//}
+
+/* pathFutureCallback //{ */
+bool Navigation::pathFutureCallback(rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedFuture future) {
+  std::shared_ptr<fog_msgs::srv::PathToLocal_Response> result = future.get();
+
+  if (result->success) {
+    RCLCPP_INFO(this->get_logger(), "[%s]: Coordinate transform returned %ld points", this->get_name(), result->path.poses.size());
+
+    for (auto &pose : result->path.poses) {
+
+      octomap::point3d point;
+      point.x() = pose.pose.position.x;
+      point.y() = pose.pose.position.y;
+      point.z() = pose.pose.position.z;
+
+      if (point.z() < min_altitude_) {
+        RCLCPP_WARN(this->get_logger(), "[%s]: Goal Z coordinate (%.2f) is below the minimum allowed altitude (%.2f)", this->get_name(), point.z(),
+                    min_altitude_);
+        return false;
+      }
+
+      if (point.z() > max_altitude_) {
+        RCLCPP_WARN(this->get_logger(), "[%s]: Goal Z coordinate (%.2f) is above the maximum allowed altitude (%.2f)", this->get_name(), point.z(),
+                    max_altitude_);
+        return false;
+      }
+
+      if ((point - uav_pos_).norm() > max_goal_distance_) {
+        RCLCPP_WARN(this->get_logger(), "[%s]: Distance to goal (%.2f) exceeds the maximum allowed distance (%.2f m)", this->get_name(),
+                    (point - uav_pos_).norm(), max_goal_distance_);
+        return false;
+      }
+
+      waypoint_in_buffer_.push_back(point);
+      RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint added (LOCAL): %.2f, %.2f, %.2f", this->get_name(), point.x(), point.y(), point.z());
+    }
+
+    RCLCPP_INFO(this->get_logger(), "[%s]: Planning started", this->get_name());
+    status_ = PLANNING;
+
+    return true;
+  }
+  return false;
 }
 //}
 

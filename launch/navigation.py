@@ -41,12 +41,21 @@ def generate_launch_description():
                 remappings=[
                     ("~/octomap_in", "/" + DRONE_DEVICE_ID + "/octomap_server/octomap_full"),
                     ("~/odometry_in", "/" + DRONE_DEVICE_ID + "/control_interface/local_odom"),
-                    ("~/waypoints_out", "/" + DRONE_DEVICE_ID + "/control_interface/waypoints"),
                     ("~/hover_in", "~/hover"),
                     ("~/goto_in", "~/goto_waypoints"),
                     ("~/goto_trigger_in", "~/goto_start"),
-                    ("~/set_path_in", "~/set_path"),
                     ("~/control_diagnostics_in",  "/" + DRONE_DEVICE_ID + "/control_interface/diagnostics"),
+                    
+                    ("~/local_waypoint_in", "~/local_waypoint"),
+                    ("~/local_path_in", "~/local_path"),
+                    ("~/gps_waypoint_in", "~/gps_waypoint"),
+                    ("~/gps_path_in", "~/gps_path"),
+
+                    ("~/local_path_out", "/" + DRONE_DEVICE_ID + "/control_interface/local_path"),
+                    ("~/gps_path_out", "/" + DRONE_DEVICE_ID + "/control_interface/gps_path"),
+                    
+                    ("~/waypoint_to_local_out", "/" + DRONE_DEVICE_ID + "/control_interface/waypoint_to_local"),
+                    ("~/path_to_local_out", "/" + DRONE_DEVICE_ID + "/control_interface/path_to_local"),
                 ],
             ),
         ],
