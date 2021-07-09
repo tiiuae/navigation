@@ -1,7 +1,7 @@
 param_namespace:
   # planning
   euclidean_distance_cutoff: 2.0 # [m]
-  safe_obstacle_distance: 1.5 # [m]
+  safe_obstacle_distance: 1.0 # [m]
   unknown_is_occupied: false
   navigation_tolerance: 0.4 # [m]
   min_altitude: 1.0 # [m]
