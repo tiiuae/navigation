@@ -92,6 +92,7 @@ private:
   double distance_penalty_;
   double greedy_penalty_;
   double vertical_penalty_;
+  double edf_penalty_;
   double planning_tree_resolution_;
   double max_waypoint_distance_;
   double planning_timeout_;
@@ -190,6 +191,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   parse_param("distance_penalty", distance_penalty_);
   parse_param("greedy_penalty", greedy_penalty_);
   parse_param("vertical_penalty", vertical_penalty_);
+  parse_param("edf_penalty", edf_penalty_);
   parse_param("planning_tree_resolution", planning_tree_resolution_);
   parse_param("max _waypoint_distance", max_waypoint_distance_);
   parse_param("planning_timeout", planning_timeout_);
@@ -245,7 +247,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   }
 
   planner = new AstarPlanner(safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_,
-                             vertical_penalty_, unknown_is_occupied_, navigation_tolerance_, max_waypoint_distance_, planning_timeout_);
+                             vertical_penalty_, edf_penalty_, unknown_is_occupied_, navigation_tolerance_, max_waypoint_distance_, planning_timeout_);
 
   is_initialized_ = true;
   RCLCPP_INFO(this->get_logger(), "[%s]: Initialized", this->get_name());
