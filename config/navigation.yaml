@@ -20,7 +20,7 @@ param_namespace:
 
   # visualization
   visualize_planner: true
-  show_unoccupied: false
+  show_unoccupied: true
   tree_points_scale: 0.22
   field_points_scale: 0.22
   expansions_points_scale: 0.15
