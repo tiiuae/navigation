@@ -1,15 +1,16 @@
 param_namespace:
   # planning
-  euclidean_distance_cutoff: 2.0 # [m]
+  euclidean_distance_cutoff: 3.0 # [m]
   safe_obstacle_distance: 1.0 # [m]
   unknown_is_occupied: false
   navigation_tolerance: 0.4 # [m]
   min_altitude: 1.0 # [m]
   max_altitude: 10.0 # [m]
   max_goal_distance: 50.0 # [m]
-  distance_penalty: 0.5
+  distance_penalty: 1.0
   greedy_penalty: 1.0
   vertical_penalty: 2.0
+  edf_penalty: 0.2
   planning_tree_resolution: 0.4
   max_waypoint_distance: 3.0 # [m] // or set negative to allow maximal segment length
   planning_timeout: 3.5 # [s]
