@@ -60,20 +60,18 @@ private:
   bool override_previous_commands_  = false;
 
   std::string parent_frame_;
-  int         replanning_without_motion = 0;
+  int         replanning_counter_ = 0;
 
   bool control_moving_  = false;
   bool goal_reached_    = false;
   bool hover_requested_ = false;
 
   octomap::point3d                 uav_pos_;
-  octomap::point3d                 current_goal_;
   std::mutex                       octree_mutex_;
   std::shared_ptr<octomap::OcTree> octree_;
   std::mutex                       status_mutex_;
   status_t                         status_ = IDLE;
 
-  octomap::point3d              goal_;
   std::vector<octomap::point3d> waypoint_out_buffer_;
   std::vector<octomap::point3d> waypoint_in_buffer_;
 
@@ -155,20 +153,17 @@ private:
   bool waypointFutureCallback(rclcpp::Client<fog_msgs::srv::WaypointToLocal>::SharedFuture future);
   bool pathFutureCallback(rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedFuture future);
 
-
-  AstarPlanner *planner;
-
   // visualization
   void visualizeTree(const octomap::OcTree &tree);
-  void visualizeExpansions(const std::set<Expansion, CostComparator> &open_list, const octomap::OcTree &tree);
+  void visualizeExpansions(const std::unordered_set<navigation::Node, HashFunction> open, const std::unordered_set<navigation::Node, HashFunction> &closed,
+                           const octomap::OcTree &tree);
   void visualizePath(const std::vector<octomap::point3d> waypoints);
   void visualizeGoals(const std::vector<octomap::point3d> waypoints, const octomap::point3d current_goal);
 
   std_msgs::msg::ColorRGBA generateColor(const double r, const double g, const double b, const double a);
 
-  std::pair<std::vector<octomap::point3d>, bool> generatePathWaypoints(const octomap::point3d &start, const octomap::point3d &end);
-  std::shared_ptr<fog_msgs::srv::Path::Request>  waypointsToPathSrv(std::vector<octomap::point3d> waypoints, bool use_first = true);
-  void                                           hover();
+  std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPathSrv(std::vector<octomap::point3d> waypoints, bool use_first = true);
+  void                                          hover();
 
   template <class T>
   bool parse_param(std::string param_name, T &param_dest);
@@ -245,9 +240,6 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   if (max_waypoint_distance_ <= 0) {
     max_waypoint_distance_ = replanning_distance_;
   }
-
-  planner = new AstarPlanner(safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_,
-                             vertical_penalty_, edf_penalty_, unknown_is_occupied_, navigation_tolerance_, max_waypoint_distance_, planning_timeout_);
 
   is_initialized_ = true;
   RCLCPP_INFO(this->get_logger(), "[%s]: Initialized", this->get_name());
@@ -657,8 +649,8 @@ void Navigation::navigationRoutine(void) {
 
       /* IDLE //{ */
       case IDLE: {
-        hover_requested_          = false;
-        replanning_without_motion = 0;
+        hover_requested_    = false;
+        replanning_counter_ = 0;
         break;
       }
         //}
@@ -691,87 +683,61 @@ void Navigation::navigationRoutine(void) {
 
         visualizeGoals(waypoint_in_buffer_, current_goal);
 
-        RCLCPP_INFO(this->get_logger(), "[%s]: Generating planning tree", this->get_name());
+        navigation::AstarPlanner planner =
+            navigation::AstarPlanner(safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_,
+                                     vertical_penalty_, min_altitude_, max_altitude_, planning_timeout_, max_waypoint_distance_, unknown_is_occupied_);
 
-        planner->generatePlanningTree(octree_, uav_pos_, planning_tree_resolution_);
+        std::pair<std::vector<octomap::point3d>, bool> waypoints =
+            planner.findPath(uav_pos_, current_goal, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
+                             std::bind(&Navigation::visualizeExpansions, this, _1, _2, _3), visualize_planner_);
 
-        // check if goal is in map
-        bool goal_in_map = planner->inMap(current_goal);
+        RCLCPP_INFO(this->get_logger(), "[%s]: Path found. Length %ld", this->get_name(), waypoints.first.size());
 
-        /* goal in map //{ */
-        if (goal_in_map) {
-          // check if the goal map cell is unoccupied
-          bool goal_valid = planner->isFree(current_goal);
+        // path is complete
+        if (waypoints.second) {
 
-          /* goal valid //{ */
-          if (goal_valid) {
-            auto pathfinding_result = generatePathWaypoints(uav_pos_, current_goal);
-            auto waypoints          = pathfinding_result.first;
-            bool is_complete        = pathfinding_result.second;
-            for (auto &w : waypoints) {
-              if ((w - uav_pos_).norm() <= replanning_distance_) {
-                waypoint_out_buffer_.push_back(w);
-              } else {
-                waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
-                break;
-              }
-            }
-            if (!is_complete) {
-              waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
-            }
-            status_ = COMMANDING;
+          replanning_counter_ = 0;
+
+          waypoints.first.push_back(current_goal);
+
+        } else {
+
+          waypoint_in_buffer_.push_back(current_goal);
+
+          if (waypoints.first.size() < 2) {
+
+            RCLCPP_WARN(this->get_logger(), "[%s]: path not found", this->get_name());
+
+            replanning_counter_++;
+
             break;
           }
-          //}
 
-          /* goal not valid //{ */
-          else {
-            RCLCPP_WARN(this->get_logger(), "[%s]: Goal is in map, but the cell is unreachable", this->get_name());
-            RCLCPP_INFO(this->get_logger(), "[%s]: A nearby replacement goal will be used", this->get_name());
-            auto new_goal = planner->nearestFreeCoord(current_goal, uav_pos_);
-            waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), new_goal);
-            // first goal in input buffer is now valid
-            // planning will be executed in the next cycle
+          double path_start_end_dist = (waypoints.first.front() - waypoints.first.back()).norm();
+
+          if (path_start_end_dist < planning_tree_resolution_ / 2.0) {
+
+            RCLCPP_WARN(this->get_logger(), "[%s]: path too short", this->get_name());
+
+            replanning_counter_++;
+
+            status_ = PLANNING;
+
             break;
           }
-          //}
         }
         //}
 
-        /* goal not in map //{ */
-        else {
-          RCLCPP_INFO(this->get_logger(), "[%s]: Goal is outside of map", this->get_name());
-          auto temporary_goal    = planner->generateTemporaryGoal(uav_pos_, current_goal);
-          auto new_goal          = temporary_goal.first;
-          bool priorize_vertical = temporary_goal.second;
-          RCLCPP_INFO(this->get_logger(), "[%s]: Generated a temporary goal: [%.2f, %.2f, %.2f]", this->get_name(), new_goal.x(), new_goal.y(), new_goal.z());
-
-          /* priorize vertical //{ */
-          if (priorize_vertical) {
-            // move up or down into unknown without planning
-            // ASSUME the environment does not change in the vertical direction
-            // This could be improved by using a 3D lidar or an upward rangefinder
-            std::vector<octomap::point3d> endpoints;
-            endpoints.push_back(uav_pos_);
-            endpoints.push_back(new_goal);
-            auto vertical_path = planner->postprocessPath(endpoints);
-
-            for (auto &w : vertical_path) {
-              waypoint_out_buffer_.push_back(w);
-            }
-
+        for (auto &w : waypoints.first) {
+          if ((w - uav_pos_).norm() <= replanning_distance_) {
+            waypoint_out_buffer_.push_back(w);
+          } else {
             waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
-            status_ = COMMANDING;
             break;
           }
-          //}
-
-          waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
-          waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), new_goal);
-          break;
         }
-        //}
 
+        status_ = COMMANDING;
         break;
       }
       //}
@@ -784,7 +750,7 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
-        if (replanning_without_motion >= replanning_limit_) {
+        if (replanning_counter_ >= replanning_limit_) {
           RCLCPP_ERROR(this->get_logger(),
                        "[%s]: No waypoint produced after %d repeated attempts. "
                        "Please provide a new waypoint");
@@ -792,14 +758,16 @@ void Navigation::navigationRoutine(void) {
         }
         if (waypoint_out_buffer_.size() < 1) {
           RCLCPP_WARN(this->get_logger(), "[%s]: Planning did not produce any waypoints. Retrying...", this->get_name());
-          replanning_without_motion++;
+          replanning_counter_++;
           status_ = PLANNING;
         }
-        RCLCPP_INFO(this->get_logger(), "[%s]: Sending %ld waypoints to the control interface", this->get_name(), waypoint_out_buffer_.size());
+        RCLCPP_INFO(this->get_logger(), "[%s]: Sending %ld waypoints to the control interface:", this->get_name(), waypoint_out_buffer_.size());
+        for (auto &w : waypoint_out_buffer_) {
+          RCLCPP_INFO(this->get_logger(), "[%s]:        %.2f, %.2f, %.2f", w.x(), w.y(), w.z());
+        }
         visualizePath(waypoint_out_buffer_);
         auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, false);
         auto call_result   = local_path_client_->async_send_request(waypoints_srv);
-        current_goal_      = waypoint_out_buffer_.back();
         waypoint_out_buffer_.clear();
         status_ = MOVING;
         break;
@@ -813,7 +781,7 @@ void Navigation::navigationRoutine(void) {
           status_ = IDLE;
           break;
         }
-        replanning_without_motion = 0;
+        replanning_counter_ = 0;
         if (!control_moving_ && goal_reached_) {
           RCLCPP_INFO(this->get_logger(), "[%s]: End of current segment reached", this->get_name());
           status_ = PLANNING;
@@ -827,25 +795,6 @@ void Navigation::navigationRoutine(void) {
   std_msgs::msg::String msg;
   msg.data = status_string[status_];
   status_publisher_->publish(msg);
-}
-//}
-
-/* generatePathWaypoints //{ */
-std::pair<std::vector<octomap::point3d>, bool> Navigation::generatePathWaypoints(const octomap::point3d &start, const octomap::point3d &end) {
-  std::vector<octomap::point3d> waypoints;
-
-  RCLCPP_INFO(this->get_logger(), "[%s]: Finding path", this->get_name());
-
-  auto pathfinding_result = planner->findPath(start, end, std::bind(&Navigation::visualizeTree, this, _1),
-                                              std::bind(&Navigation::visualizeExpansions, this, _1, _2), visualize_planner_);
-
-  waypoints = pathfinding_result.first;
-
-  RCLCPP_INFO(this->get_logger(), "[%s]: Postprocessing path", this->get_name());
-  auto processed = planner->postprocessPath(waypoints);
-  RCLCPP_INFO(this->get_logger(), "[%s]: Transformed %ld waypoints to %ld waypoints", this->get_name(), waypoints.size(), processed.size());
-  waypoints = processed;
-  return {waypoints, pathfinding_result.second};
 }
 //}
 
@@ -998,7 +947,7 @@ void Navigation::visualizeTree(const octomap::OcTree &tree) {
       msg.colors.push_back(color);
     } else if (show_unoccupied_) {
       geometry_msgs::msg::Point gp;
-      auto                      color = generateColor(0.7, 0.7, 0.7, 1.0);
+      auto                      color = generateColor(0.7, 0.7, 0.7, 0.7);
       gp.x                            = it.getX();
       gp.y                            = it.getY();
       gp.z                            = it.getZ();
@@ -1011,7 +960,8 @@ void Navigation::visualizeTree(const octomap::OcTree &tree) {
 //}
 
 /* visualizeExpansions //{ */
-void Navigation::visualizeExpansions(const std::set<Expansion, CostComparator> &open_list, const octomap::OcTree &tree) {
+void Navigation::visualizeExpansions(const std::unordered_set<navigation::Node, HashFunction>  open,
+                                     const std::unordered_set<navigation::Node, HashFunction> &closed, const octomap::OcTree &tree) {
   RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Visualizing open planning expansions", this->get_name());
   visualization_msgs::msg::Marker msg;
   msg.header.frame_id    = parent_frame_;
@@ -1027,7 +977,7 @@ void Navigation::visualizeExpansions(const std::set<Expansion, CostComparator> &
   double max_cost = 0;
   double min_cost = 1e6;
 
-  for (auto it = open_list.begin(); it != open_list.end(); it++) {
+  for (auto it = open.begin(); it != open.end(); it++) {
     if (it->total_cost > max_cost) {
       max_cost = it->total_cost;
     }
@@ -1036,14 +986,25 @@ void Navigation::visualizeExpansions(const std::set<Expansion, CostComparator> &
     }
   }
 
-  for (auto it = open_list.begin(); it != open_list.end(); it++) {
+  for (auto it = open.begin(); it != open.end(); it++) {
     auto                      coords = tree.keyToCoord(it->key);
     geometry_msgs::msg::Point gp;
     double                    brightness = (it->total_cost - min_cost) / (max_cost - min_cost);
-    auto                      color      = generateColor(0.65, 0.2, brightness, 0.8);
+    auto                      color      = generateColor(0.0, brightness, 0.3, 0.8);
     gp.x                                 = coords.x();
     gp.y                                 = coords.y();
     gp.z                                 = coords.z();
+    msg.points.push_back(gp);
+    msg.colors.push_back(color);
+  }
+
+  for (auto it = closed.begin(); it != closed.end(); it++) {
+    auto                      coords = tree.keyToCoord(it->key);
+    geometry_msgs::msg::Point gp;
+    auto                      color = generateColor(0.8, 0.0, 0, 0.8);
+    gp.x                            = coords.x();
+    gp.y                            = coords.y();
+    gp.z                            = coords.z();
     msg.points.push_back(gp);
     msg.colors.push_back(color);
   }

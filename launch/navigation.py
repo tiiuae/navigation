@@ -60,7 +60,7 @@ def generate_launch_description():
             ),
         ],
         output='screen',
-        prefix=dbg_sub,
+        prefix=[dbg_sub, 'stdbuf -o L'],
         parameters=[{"use_sim_time": launch.substitutions.LaunchConfiguration("use_sim_time")},],
     ))
 
