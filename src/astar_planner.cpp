@@ -51,17 +51,17 @@ bool LeafComparator::operator()(const std::pair<octomap::OcTree::iterator, doubl
 
 /* AstarPlanner constructor //{ */
 AstarPlanner::AstarPlanner(double safe_obstacle_distance, double euclidean_distance_cutoff, double planning_tree_resolution, double distance_penalty,
-                           double greedy_penalty, double min_altitude, double max_altitude, double timeout_threshold,
-                           double max_waypoint_distance, bool unknown_is_occupied) {
-
+                           double greedy_penalty, double vertical_penalty, double edf_penalty, bool unknown_is_occupied, float navigation_tolerance,
+                           double max_waypoint_distance, double planning_timeout) {
   this->safe_obstacle_distance    = safe_obstacle_distance;
   this->euclidean_distance_cutoff = euclidean_distance_cutoff;
   this->planning_tree_resolution  = planning_tree_resolution;
   this->distance_penalty          = distance_penalty;
   this->greedy_penalty            = greedy_penalty;
-  this->min_altitude              = min_altitude;
-  this->max_altitude              = max_altitude;
-  this->timeout_threshold         = timeout_threshold;
+  this->vertical_penalty          = vertical_penalty;
+  this->edf_penalty               = edf_penalty;
+  this->unknown_is_occupied       = unknown_is_occupied;
+  this->navigation_tolerance      = navigation_tolerance;
   this->max_waypoint_distance     = max_waypoint_distance;
   this->unknown_is_occupied       = unknown_is_occupied;
 }
@@ -207,6 +207,26 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
 
       Node n;
       n.key = nkey;
+      // check if open
+      auto open_query = open.find(n);
+      if (open_query != open.end()) {
+        // in open map
+
+        n.goal_dist  = distPenalizeVertical(nkey, goal, *binary_tree, vertical_penalty);
+        n.cum_dist   = current.cum_dist + distPenalizeVertical(current.key, nkey, *binary_tree, vertical_penalty);
+        n.total_cost = n.goal_dist + n.cum_dist + edfCost(current_coord);
+
+        if (n < current) {
+          // new path is better -> update
+          Expansion open_node = *open_query;
+          open.erase(open_node);
+          parent_map.erase(open_node);
+
+          open.insert(n);
+          parent_map[n] = current;
+          continue;
+        }
+      }
 
       auto closed_query = closed.find(n);
       auto open_query   = open.find(n);
@@ -226,7 +246,9 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
           best_node_greedy = n;
         }
 
-        open_heap.push(n);
+        n.goal_dist  = distPenalizeVertical(nkey, goal, *binary_tree, vertical_penalty);
+        n.cum_dist   = current.cum_dist + distPenalizeVertical(current.key, nkey, *binary_tree, vertical_penalty);
+        n.total_cost = distance_penalty * n.cum_dist + greedy_penalty * n.goal_dist + edfCost(current_coord);
         open.insert(n);
         parent_map[n] = current;
       }
@@ -322,9 +344,16 @@ double AstarPlanner::distEuclidean(const octomap::OcTreeKey &k1, const octomap::
 
 //}
 
-/* freeStraightPath() //{ */
+double AstarPlanner::edfCost(const octomap::point3d &p) {
+  double cost = euclidean_distance_cutoff - edf_->getDistance(p);
+  if (cost < 0.0) {
+    return 0.0;
+  }
+  return cost * edf_penalty;
+}
 
-bool AstarPlanner::freeStraightPath(const octomap::point3d p1, const octomap::point3d p2, octomap::OcTree &tree) {
+/* freeStraightPath //{ */
+bool AstarPlanner::freeStraightPath(const octomap::point3d p1, const octomap::point3d p2, double max_waypoint_distance) {
 
   octomap::KeyRay ray;
   tree.computeRayKeys(p1, p2, ray);
@@ -387,38 +416,31 @@ std::vector<octomap::point3d> AstarPlanner::keysToCoords(std::vector<octomap::Oc
 
 //}
 
-/* euclideanDistanceTransform() //{ */
-
-DynamicEDTOctomap AstarPlanner::euclideanDistanceTransform(std::shared_ptr<octomap::OcTree> tree) {
-
+/* euclideanDistanceTransform //{ */
+DynamicEDTOctomap *AstarPlanner::euclideanDistanceTransform(std::shared_ptr<octomap::OcTree> tree) {
   double x, y, z;
 
   tree->getMetricMin(x, y, z);
   octomap::point3d metric_min(x, y, z);
 
   tree->getMetricMax(x, y, z);
-  octomap::point3d metric_max(x, y, z);
-
-  DynamicEDTOctomap edf(euclidean_distance_cutoff, tree.get(), metric_min, metric_max, unknown_is_occupied);
-  edf.update();
-
+  octomap::point3d   metric_max(x, y, z);
+  DynamicEDTOctomap *edf = new DynamicEDTOctomap(euclidean_distance_cutoff, tree.get(), metric_min, metric_max, unknown_is_occupied);
+  edf->update();
   return edf;
 }
 //}
 
 /* createPlanningTree() //{ */
 
-std::optional<std::pair<octomap::OcTree, std::vector<octomap::point3d>>> AstarPlanner::createPlanningTree(std::shared_ptr<octomap::OcTree> tree,
-                                                                                                          const octomap::point3d &start, double resolution) {
-
-  auto            edf         = euclideanDistanceTransform(tree);
-  octomap::OcTree binary_tree = octomap::OcTree(resolution);
-
-  tree->expand();
-
-  for (auto it = tree->begin(); it != tree->end(); it++) {
-    if (edf.getDistance(it.getCoordinate()) <= safe_obstacle_distance) {
-      binary_tree.setNodeValue(it.getCoordinate(), TreeValue::OCCUPIED);  // obstacle or close to obstacle
+  tunnel.clear();
+  edf_        = euclideanDistanceTransform(mapping_tree);
+  binary_tree = new octomap::OcTree(resolution);
+  mapping_tree->expand();
+  for (auto it = mapping_tree->begin(); it != mapping_tree->end(); it++) {
+    if (edf_->getDistance(it.getCoordinate()) <= safe_obstacle_distance) {
+      binary_tree->setNodeValue(it.getCoordinate(),
+                                TreeValue::OCCUPIED);  // obstacle or close to obstacle
     } else {
       binary_tree.setNodeValue(it.getCoordinate(), TreeValue::FREE);  // free and safe
     }
@@ -448,8 +470,7 @@ std::optional<std::pair<octomap::OcTree, std::vector<octomap::point3d>>> AstarPl
 
       float            obstacle_dist;
       octomap::point3d closest_obstacle;
-
-      edf.getDistanceAndClosestObstacle(current_coords, obstacle_dist, closest_obstacle);
+      edf_->getDistanceAndClosestObstacle(current_coords, obstacle_dist, closest_obstacle);
       octomap::point3d dir_away_from_obstacle = current_coords - closest_obstacle;
 
       if (obstacle_dist >= safe_obstacle_distance) {
