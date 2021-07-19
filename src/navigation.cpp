@@ -720,6 +720,15 @@ void Navigation::navigationRoutine(void) {
 
         visualizeGoals(waypoint_in_buffer_, current_goal);
 
+
+        if (replanning_counter_ >= replanning_limit_) {
+          RCLCPP_ERROR(this->get_logger(),
+                       "[%s]: No waypoint produced after %d repeated attempts. "
+                       "Please provide a new waypoint",
+                       this->get_name(), replanning_counter_);
+          status_ = IDLE;
+        }
+
         navigation::AstarPlanner planner =
             navigation::AstarPlanner(safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_,
                                      vertical_penalty_, min_altitude_, max_altitude_, planning_timeout_, max_waypoint_distance_, unknown_is_occupied_);
@@ -728,7 +737,8 @@ void Navigation::navigationRoutine(void) {
             planner.findPath(uav_pos_, current_goal, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
                              std::bind(&Navigation::visualizeExpansions, this, _1, _2, _3), visualize_planner_);
 
-        RCLCPP_INFO(this->get_logger(), "[%s]: Path found. Length %ld", this->get_name(), waypoints.first.size());
+        RCLCPP_INFO(this->get_logger(), "[%s]: Planner returned %ld waypoints", this->get_name(), waypoints.first.size());
+
 
         // path is complete
         if (waypoints.second) {
@@ -738,6 +748,12 @@ void Navigation::navigationRoutine(void) {
           waypoints.first.push_back(current_goal);
 
         } else {
+
+          if ((uav_pos_ - current_goal).norm() <= 2 * planning_tree_resolution_) {
+            RCLCPP_INFO(this->get_logger(), "[%s]: Current goal reached", this->get_name());
+            status_ = PLANNING;
+            break;
+          }
 
           waypoint_in_buffer_.push_back(current_goal);
 
@@ -788,20 +804,15 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
-        if (replanning_counter_ >= replanning_limit_) {
-          RCLCPP_ERROR(this->get_logger(),
-                       "[%s]: No waypoint produced after %d repeated attempts. "
-                       "Please provide a new waypoint");
-          status_ = IDLE;
-        }
         if (waypoint_out_buffer_.size() < 1) {
           RCLCPP_WARN(this->get_logger(), "[%s]: Planning did not produce any waypoints. Retrying...", this->get_name());
           replanning_counter_++;
           status_ = PLANNING;
         }
+
         RCLCPP_INFO(this->get_logger(), "[%s]: Sending %ld waypoints to the control interface:", this->get_name(), waypoint_out_buffer_.size());
         for (auto &w : waypoint_out_buffer_) {
-          RCLCPP_INFO(this->get_logger(), "[%s]:        %.2f, %.2f, %.2f", w.x(), w.y(), w.z());
+          RCLCPP_INFO(this->get_logger(), "[%s]:        %.2f, %.2f, %.2f", this->get_name(), w.x(), w.y(), w.z());
         }
         visualizePath(waypoint_out_buffer_);
         auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, false);
@@ -819,6 +830,7 @@ void Navigation::navigationRoutine(void) {
           status_ = IDLE;
           break;
         }
+
         replanning_counter_ = 0;
         if (!control_moving_ && goal_reached_) {
           RCLCPP_INFO(this->get_logger(), "[%s]: End of current segment reached", this->get_name());

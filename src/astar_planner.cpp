@@ -366,9 +366,9 @@ bool AstarPlanner::freeStraightPath(const octomap::point3d p1, const octomap::po
       return false;
     }
 
-    /* if (max_waypoint_distance > 0 && (p1 - p2).norm() > max_waypoint_distance) { */
-    /*   return false; */
-    /* } */
+    if (max_waypoint_distance > 0 && (p1 - p2).norm() > max_waypoint_distance) {
+      return false;
+    }
   }
 
   return true;
