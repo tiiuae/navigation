@@ -712,14 +712,12 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
-        last_goal_    = current_goal_;
-        current_goal_ = waypoint_in_buffer_.front();
+        octomap::point3d current_goal = waypoint_in_buffer_.front();
         waypoint_in_buffer_.erase(waypoint_in_buffer_.begin());
         RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint [%.2f, %.2f, %.2f] set as a next goal", this->get_name(), current_goal.x(), current_goal.y(),
                     current_goal.z());
 
         visualizeGoals(waypoint_in_buffer_, current_goal);
-
 
         if (replanning_counter_ >= replanning_limit_) {
           RCLCPP_ERROR(this->get_logger(),
@@ -733,51 +731,60 @@ void Navigation::navigationRoutine(void) {
             navigation::AstarPlanner(safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_,
                                      vertical_penalty_, min_altitude_, max_altitude_, planning_timeout_, max_waypoint_distance_, unknown_is_occupied_);
 
-        std::pair<std::vector<octomap::point3d>, bool> waypoints =
+        std::pair<std::vector<octomap::point3d>, PlanningResult> waypoints =
             planner.findPath(uav_pos_, current_goal, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
                              std::bind(&Navigation::visualizeExpansions, this, _1, _2, _3), visualize_planner_);
 
         RCLCPP_INFO(this->get_logger(), "[%s]: Planner returned %ld waypoints", this->get_name(), waypoints.first.size());
 
+        /* GOAL_REACHED //{ */
+        if (waypoints.second == GOAL_REACHED) {
+          RCLCPP_INFO(this->get_logger(), "[%s]: Current goal reached", this->get_name());
+          break;
+        }
+        //}
 
-        // path is complete
-        if (waypoints.second) {
-
+        /* COMPLETE //{ */
+        if (waypoints.second == COMPLETE) {
           replanning_counter_ = 0;
-
           waypoints.first.push_back(current_goal);
+        }
+        //}
 
-        } else {
-
-          if ((uav_pos_ - current_goal).norm() <= 2 * planning_tree_resolution_) {
-            RCLCPP_INFO(this->get_logger(), "[%s]: Current goal reached", this->get_name());
-            status_ = PLANNING;
-            break;
-          }
-
-          waypoint_in_buffer_.push_back(current_goal);
+        /* INCOMPLETE //{ */
+        if (waypoints.second == INCOMPLETE) {
+          waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
 
           if (waypoints.first.size() < 2) {
-
             RCLCPP_WARN(this->get_logger(), "[%s]: path not found", this->get_name());
-
             replanning_counter_++;
-
             break;
           }
 
           double path_start_end_dist = (waypoints.first.front() - waypoints.first.back()).norm();
 
           if (path_start_end_dist < planning_tree_resolution_ / 2.0) {
-
             RCLCPP_WARN(this->get_logger(), "[%s]: path too short", this->get_name());
-
             replanning_counter_++;
-
-            status_ = PLANNING;
-
             break;
           }
+        }
+        //}
+
+        /* GOAL_IN_OBSTACLE //{ */
+        if (waypoints.second == GOAL_IN_OBSTACLE) {
+          replanning_counter_ = 0;
+          RCLCPP_WARN(this->get_logger(), "[%s]: Goal [%.2f, %.2f, %.2f] is inside an inflated obstacle", this->get_name(), current_goal.x(), current_goal.y(),
+                      current_goal.z());
+        }
+        //}
+
+        /* FAILURE //{ */
+        if (waypoints.second == FAILURE) {
+          RCLCPP_WARN(this->get_logger(), "[%s]: planner failure", this->get_name());
+          waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
+          replanning_counter_++;
+          break;
         }
         //}
 
@@ -785,6 +792,7 @@ void Navigation::navigationRoutine(void) {
           if ((w - uav_pos_).norm() <= replanning_distance_) {
             waypoint_out_buffer_.push_back(w);
           } else {
+            RCLCPP_INFO(this->get_logger(), "[%s]: Path exceeding replanning distance", this->get_name());
             waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
             break;
           }
@@ -845,8 +853,7 @@ void Navigation::navigationRoutine(void) {
   std_msgs::msg::String msg;
   msg.data = STATUS_STRING[status_];
   status_publisher_->publish(msg);
-  publishDiagnostics();
-}
+}  // namespace navigation
 //}
 
 /* waypointsToPathSrv //{ */

@@ -19,6 +19,16 @@ enum TreeValue
   FREE     = 1
 };
 
+enum PlanningResult
+{
+  COMPLETE= 0,
+  GOAL_REACHED,
+  INCOMPLETE,
+  GOAL_IN_OBSTACLE,
+  FAILURE
+};
+
+
 struct Node
 {
   octomap::OcTreeKey key;
@@ -68,7 +78,7 @@ private:
   bool   unknown_is_occupied;
 
 public:
-  std::pair<std::vector<octomap::point3d>, bool> findPath(
+  std::pair<std::vector<octomap::point3d>, PlanningResult> findPath(
       const octomap::point3d &start_coord, const octomap::point3d &goal_coord, std::shared_ptr<octomap::OcTree> mapping_tree, double timeout,
       std::function<void(const octomap::OcTree &)> visualizeTree,
       std::function<void(const std::unordered_set<Node, HashFunction> &, const std::unordered_set<Node, HashFunction> &, const octomap::OcTree &)>
@@ -100,8 +110,6 @@ private:
 
   std::optional<std::pair<octomap::OcTree, std::vector<octomap::point3d>>> createPlanningTree(std::shared_ptr<octomap::OcTree> tree,
                                                                                               const octomap::point3d &start, double resolution);
-
-  octomap::point3d nearestFreeCoord(const octomap::point3d &p, const octomap::point3d &uav_pos, octomap::OcTree &tree);
 
   std::pair<octomap::point3d, bool> generateTemporaryGoal(const octomap::point3d &start, const octomap::point3d &goal, octomap::OcTree &tree);
 
