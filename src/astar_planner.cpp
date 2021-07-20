@@ -70,7 +70,7 @@ AstarPlanner::AstarPlanner(double safe_obstacle_distance, double euclidean_dista
 
 /* findPath //{ */
 
-std::pair<std::vector<octomap::point3d>, bool> AstarPlanner::findPath(
+std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
     const octomap::point3d &start_coord, const octomap::point3d &goal_coord, std::shared_ptr<octomap::OcTree> mapping_tree, double timeout,
     std::function<void(const octomap::OcTree &)> visualizeTree,
     std::function<void(const std::unordered_set<Node, HashFunction> &, const std::unordered_set<Node, HashFunction> &, const octomap::OcTree &)>
@@ -91,7 +91,7 @@ std::pair<std::vector<octomap::point3d>, bool> AstarPlanner::findPath(
 
   if (!tree_with_tunnel) {
     printf("[Astar]: could not create a planning tree\n");
-    return {std::vector<octomap::point3d>(), false};
+    return {std::vector<octomap::point3d>(), FAILURE};
   }
 
   visualizeTree((*tree_with_tunnel).first);
@@ -100,9 +100,7 @@ std::pair<std::vector<octomap::point3d>, bool> AstarPlanner::findPath(
   auto tunnel = tree_with_tunnel.value().second;
 
   auto map_goal  = goal_coord;
-  auto map_query = mapping_tree->search(goal_coord);
-
-  bool original_goal = true;
+  auto map_query = tree_with_tunnel->first.search(goal_coord);
 
   if (map_query == NULL) {
     printf("[Astar]: Goal is outside of map\n");
@@ -112,16 +110,16 @@ std::pair<std::vector<octomap::point3d>, bool> AstarPlanner::findPath(
       std::vector<octomap::point3d> vertical_path;
       vertical_path.push_back(start_coord);
       vertical_path.push_back(temp_goal.first);
-      return {vertical_path, false};
+      return {vertical_path, INCOMPLETE};
     } else {
       map_goal = temp_goal.first;
     }
-    original_goal = false;
   } else if (map_query->getValue() == TreeValue::OCCUPIED) {
-    printf("[Astar:] Goal is inside an inflated obstacle\n");
-    map_goal = nearestFreeCoord(goal_coord, start_coord, tree);
-    printf("[Astar]: Generated a replacement goal: [%.2f, %.2f, %.2f]\n", map_goal.x(), map_goal.y(), map_goal.z());
-    original_goal = false;
+    printf("[Astar]: Goal is inside an inflated obstacle\n");
+    if (distEuclidean(map_goal, start_coord) <= 1 * safe_obstacle_distance) {
+      printf("[Astar]: Path special case, we cannot get closer\n");
+      return {std::vector<octomap::point3d>(), GOAL_REACHED};
+    }
   }
 
   /* mrs_lib::geometry::Cuboid c_start(Eigen::Vector3d(start_coord.x(), start_coord.y(), start_coord.z()), Eigen::Vector3d(0.3, 0.3, 0.3), */
@@ -157,7 +155,7 @@ std::pair<std::vector<octomap::point3d>, bool> AstarPlanner::findPath(
     visualizeExpansions(open, closed, tree);
     /* bv->publish(); */
 
-    return {std::vector<octomap::point3d>(), false};
+    return {std::vector<octomap::point3d>(), GOAL_REACHED};
   }
 
   std::cout << "[Astar]: Planning from: " << planning_start.x() << ", " << planning_start.y() << ", " << planning_start.z() << "\n";
@@ -200,7 +198,7 @@ std::pair<std::vector<octomap::point3d>, bool> AstarPlanner::findPath(
       visualizeExpansions(open, closed, tree);
       /* bv->publish(); */
 
-      return {prepareOutputPath(path_keys, tree), false};
+      return {prepareOutputPath(path_keys, tree), INCOMPLETE};
     }
 
     auto current_coord = tree.keyToCoord(current.key);
@@ -218,7 +216,7 @@ std::pair<std::vector<octomap::point3d>, bool> AstarPlanner::findPath(
       visualizeExpansions(open, closed, tree);
       /* bv->publish(); */
 
-      return {prepareOutputPath(path_keys, tree), original_goal};
+      return {prepareOutputPath(path_keys, tree), COMPLETE};
     }
 
     // expand
@@ -270,23 +268,23 @@ std::pair<std::vector<octomap::point3d>, bool> AstarPlanner::findPath(
 
     auto path_keys = backtrackPathKeys(best_node, first, parent_map);
 
-    printf("[Astar]: direct path does not exist, goint to the 'best_node'\n");
+    printf("[Astar]: direct path does not exist, going to the 'best_node'\n");
 
-    return std::make_pair(prepareOutputPath(path_keys, tree), false);
+    return {prepareOutputPath(path_keys, tree), INCOMPLETE};
   }
 
   if (best_node_greedy != first) {
 
     auto path_keys = backtrackPathKeys(best_node_greedy, first, parent_map);
 
-    printf("[Astar]: direct path does not exist, goint to the best_node_greedy'\n");
+    printf("[Astar]: direct path does not exist, going to the best_node_greedy'\n");
 
-    return std::make_pair(prepareOutputPath(path_keys, tree), false);
+    return {prepareOutputPath(path_keys, tree), INCOMPLETE};
   }
 
   printf("[Astar]: PATH DOES NOT EXIST!\n");
 
-  return {std::vector<octomap::point3d>(), false};
+  return {std::vector<octomap::point3d>(), FAILURE};
 }
 //}
 
@@ -506,31 +504,6 @@ std::optional<std::pair<octomap::OcTree, std::vector<octomap::point3d>>> AstarPl
   return result;
 }
 
-//}
-
-/* nearestFreeCoord() //{ */
-
-octomap::point3d AstarPlanner::nearestFreeCoord(const octomap::point3d &p, const octomap::point3d &uav_pos, octomap::OcTree &tree) {
-
-  auto query = tree.search(p);
-  if (query != NULL && query->getValue() == TreeValue::FREE) {
-    return p;
-  }
-
-  auto neighbors = getNeighborhood(tree.coordToKey(p), tree);
-  for (auto &n : neighbors) {
-    auto query = tree.search(n);
-    if (query != NULL && query->getValue() == TreeValue::FREE) {
-      return tree.keyToCoord(n);
-    }
-  }
-
-  // no free neighbor -> try a point closer to UAV
-  octomap::point3d dir_to_uav;
-  dir_to_uav = (uav_pos - p).normalized() * tree.getResolution();
-
-  return nearestFreeCoord(p + dir_to_uav, uav_pos, tree);
-}
 //}
 
 /* postprocessPath() //{ */
