@@ -61,8 +61,7 @@ class AstarPlanner {
 
 public:
   AstarPlanner(double safe_obstacle_distance, double euclidean_distance_cutoff, double planning_tree_resolution, double distance_penalty, double greedy_penalty,
-               double vertical_penalty, double min_altitude, double max_altitude, double timeout_threshold, double max_waypoint_distance,
-               bool unknown_is_occupied);
+               double min_altitude, double max_altitude, double timeout_threshold, double max_waypoint_distance, bool unknown_is_occupied);
 
 private:
   double safe_obstacle_distance;
@@ -70,7 +69,6 @@ private:
   double planning_tree_resolution;
   double distance_penalty;
   double greedy_penalty;
-  double vertical_penalty;
   double timeout_threshold;
   double max_waypoint_distance;
   double min_altitude;
