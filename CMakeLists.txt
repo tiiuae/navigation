@@ -51,9 +51,9 @@ ament_target_dependencies(navigation
   rclcpp_components
   std_msgs
   std_srvs
-  fog_msgs 
-  nav_msgs 
-  geometry_msgs 
+  fog_msgs
+  nav_msgs
+  geometry_msgs
   visualization_msgs
   tf2
   tf2_ros

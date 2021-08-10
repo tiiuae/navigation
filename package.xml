@@ -6,7 +6,7 @@
   <version>0.0.5</version>
   <description>Provides collision free path-planning</description>
   <maintainer email="petr.stibinger@fly4future.com">stibipet</maintainer>
-  
+
   <license>BSD 3-Clause</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
