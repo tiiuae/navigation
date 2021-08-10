@@ -4,6 +4,7 @@
 #include <future>
 #include <mutex>
 #include <sstream>
+#include <eigen3/Eigen/Dense>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <navigation/astar_planner.hpp>
@@ -44,6 +45,18 @@ enum status_t
 
 std::string status_string[] = {"IDLE", "PLANNING", "COMMANDING", "MOVING"};
 
+double getYaw(const geometry_msgs::msg::Quaternion &q) {
+  return atan2(2.0 * (q.z * q.w + q.x * q.y), -1.0 + 2.0 * (q.w * q.w + q.x * q.x));
+}
+
+octomap::point3d toPoint3d(const Eigen::Vector4d &vec) {
+  octomap::point3d p;
+  p.x() = vec.x();
+  p.y() = vec.y();
+  p.z() = vec.z();
+  return p;
+}
+
 /* class Navigation //{ */
 class Navigation : public rclcpp::Node {
 public:
@@ -66,14 +79,14 @@ private:
   bool goal_reached_    = false;
   bool hover_requested_ = false;
 
-  octomap::point3d                 uav_pos_;
+  Eigen::Vector4d                  uav_pos_;
   std::mutex                       octree_mutex_;
   std::shared_ptr<octomap::OcTree> octree_;
   std::mutex                       status_mutex_;
   status_t                         status_ = IDLE;
 
-  std::vector<octomap::point3d> waypoint_out_buffer_;
-  std::vector<octomap::point3d> waypoint_in_buffer_;
+  std::vector<Eigen::Vector4d> waypoint_out_buffer_;
+  std::vector<Eigen::Vector4d> waypoint_in_buffer_;
 
   rclcpp::CallbackGroup::SharedPtr callback_group_;
   rclcpp::TimerBase::SharedPtr     execution_timer_;
@@ -157,12 +170,12 @@ private:
   void visualizeTree(const octomap::OcTree &tree);
   void visualizeExpansions(const std::unordered_set<navigation::Node, HashFunction> open, const std::unordered_set<navigation::Node, HashFunction> &closed,
                            const octomap::OcTree &tree);
-  void visualizePath(const std::vector<octomap::point3d> waypoints);
-  void visualizeGoals(const std::vector<octomap::point3d> waypoints, const octomap::point3d current_goal);
+  void visualizePath(const std::vector<Eigen::Vector4d> waypoints);
+  void visualizeGoals(const std::vector<Eigen::Vector4d> waypoints, const Eigen::Vector4d current_goal);
 
   std_msgs::msg::ColorRGBA generateColor(const double r, const double g, const double b, const double a);
 
-  std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPathSrv(std::vector<octomap::point3d> waypoints, bool use_first = true);
+  std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPathSrv(std::vector<Eigen::Vector4d> waypoints, bool use_first = true);
   void                                          hover();
 
   template <class T>
@@ -272,9 +285,10 @@ void Navigation::odometryCallback(const nav_msgs::msg::Odometry::UniquePtr msg) 
 
   getting_odometry_ = true;
   RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Getting odometry", this->get_name());
-  uav_pos_.x() = msg->pose.pose.position.x;
-  uav_pos_.y() = msg->pose.pose.position.y;
-  uav_pos_.z() = msg->pose.pose.position.z;
+  uav_pos_[0] = msg->pose.pose.position.x;
+  uav_pos_[1] = msg->pose.pose.position.y;
+  uav_pos_[2] = msg->pose.pose.position.z;
+  uav_pos_[3] = getYaw(msg->pose.pose.orientation);
 }
 //}
 
@@ -327,10 +341,11 @@ void Navigation::gotoCallback(const nav_msgs::msg::Path::UniquePtr msg) {
 
   waypoint_in_buffer_.clear();
   for (const auto &p : msg->poses) {
-    octomap::point3d point;
-    point.x() = p.pose.position.x;
-    point.y() = p.pose.position.y;
-    point.z() = p.pose.position.z;
+    Eigen::Vector4d point;
+    point[0] = p.pose.position.x;
+    point[1] = p.pose.position.y;
+    point[2] = p.pose.position.z;
+    point[3] = getYaw(p.pose.orientation);
     waypoint_in_buffer_.push_back(point);
   }
   RCLCPP_INFO(this->get_logger(), "[%s]: Waiting for planning trigger", this->get_name());
@@ -430,11 +445,12 @@ bool Navigation::localPathCallback([[maybe_unused]] const std::shared_ptr<fog_ms
   }
 
   waypoint_in_buffer_.clear();
-  for (const auto &w : request->path.poses) {
-    octomap::point3d point;
-    point.x() = w.pose.position.x;
-    point.y() = w.pose.position.y;
-    point.z() = w.pose.position.z;
+  for (const auto &p : request->path.poses) {
+    Eigen::Vector4d point;
+    point[0] = p.pose.position.x;
+    point[1] = p.pose.position.y;
+    point[2] = p.pose.position.z;
+    point[3] = getYaw(p.pose.orientation);
     waypoint_in_buffer_.push_back(point);
   }
 
@@ -537,10 +553,11 @@ bool Navigation::localWaypointCallback([[maybe_unused]] const std::shared_ptr<fo
   }
 
   waypoint_in_buffer_.clear();
-  octomap::point3d point;
-  point.x() = request->goal[0];
-  point.y() = request->goal[1];
-  point.z() = request->goal[2];
+  Eigen::Vector4d point;
+  point[0] = request->goal[0];
+  point[1] = request->goal[1];
+  point[2] = request->goal[2];
+  point[3] = request->goal[3];
   waypoint_in_buffer_.push_back(point);
 
   RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint set: %.2f, %.2f, %.2f", this->get_name(), point.x(), point.y(), point.z());
@@ -677,10 +694,10 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
-        octomap::point3d current_goal = waypoint_in_buffer_.front();
+        Eigen::Vector4d current_goal = waypoint_in_buffer_.front();
         waypoint_in_buffer_.erase(waypoint_in_buffer_.begin());
-        RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint [%.2f, %.2f, %.2f] set as a next goal", this->get_name(), current_goal.x(), current_goal.y(),
-                    current_goal.z());
+        RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint [%.2f, %.2f, %.2f, %.2f] set as a next goal", this->get_name(), current_goal[0], current_goal[1],
+                    current_goal[2], current_goal[3]);
 
         visualizeGoals(waypoint_in_buffer_, current_goal);
 
@@ -696,9 +713,12 @@ void Navigation::navigationRoutine(void) {
             navigation::AstarPlanner(safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_,
                                      vertical_penalty_, min_altitude_, max_altitude_, planning_timeout_, max_waypoint_distance_, unknown_is_occupied_);
 
+        octomap::point3d planning_start = toPoint3d(uav_pos_);
+        octomap::point3d planning_goal  = toPoint3d(current_goal);
+
         std::pair<std::vector<octomap::point3d>, PlanningResult> waypoints =
-            planner.findPath(uav_pos_, current_goal, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
-                             std::bind(&Navigation::visualizeExpansions, this, _1, _2, _3), visualize_planner_);
+            planner.findPath(planning_start, planning_goal, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
+                             std::bind(&Navigation::visualizeExpansions, this, _1, _2, _3));
 
         RCLCPP_INFO(this->get_logger(), "[%s]: Planner returned %ld waypoints", this->get_name(), waypoints.first.size());
 
@@ -712,7 +732,7 @@ void Navigation::navigationRoutine(void) {
         /* COMPLETE //{ */
         if (waypoints.second == COMPLETE) {
           replanning_counter_ = 0;
-          waypoints.first.push_back(current_goal);
+          /* waypoints.first.push_back(current_goal); */
         }
         //}
 
@@ -726,7 +746,11 @@ void Navigation::navigationRoutine(void) {
             break;
           }
 
-          double path_start_end_dist = (waypoints.first.front() - waypoints.first.back()).norm();
+          Eigen::Vector3d w_start, w_end;
+          w_start.x()                = waypoints.first.front().x();
+          w_start.y()                = waypoints.first.front().y();
+          w_start.z()                = waypoints.first.front().z();
+          double path_start_end_dist = (w_end - w_start).norm();
 
           if (path_start_end_dist < planning_tree_resolution_ / 2.0) {
             RCLCPP_WARN(this->get_logger(), "[%s]: path too short", this->get_name());
@@ -739,8 +763,8 @@ void Navigation::navigationRoutine(void) {
         /* GOAL_IN_OBSTACLE //{ */
         if (waypoints.second == GOAL_IN_OBSTACLE) {
           replanning_counter_ = 0;
-          RCLCPP_WARN(this->get_logger(), "[%s]: Goal [%.2f, %.2f, %.2f] is inside an inflated obstacle", this->get_name(), current_goal.x(), current_goal.y(),
-                      current_goal.z());
+          RCLCPP_WARN(this->get_logger(), "[%s]: Goal [%.2f, %.2f, %.2f, %.2f] is inside an inflated obstacle", this->get_name(), current_goal[0],
+                      current_goal[1], current_goal[2], current_goal[3]);
         }
         //}
 
@@ -754,8 +778,9 @@ void Navigation::navigationRoutine(void) {
         //}
 
         for (auto &w : waypoints.first) {
-          if ((w - uav_pos_).norm() <= replanning_distance_) {
-            waypoint_out_buffer_.push_back(w);
+          Eigen::Vector4d wp(w.x(), w.y(), w.z(), 0.0); // FIXME heading
+          if ((wp.head<3>() - uav_pos_.head<3>()).norm() <= replanning_distance_) {
+            waypoint_out_buffer_.push_back(wp);
           } else {
             RCLCPP_INFO(this->get_logger(), "[%s]: Path exceeding replanning distance", this->get_name());
             waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal);
@@ -785,7 +810,7 @@ void Navigation::navigationRoutine(void) {
 
         RCLCPP_INFO(this->get_logger(), "[%s]: Sending %ld waypoints to the control interface:", this->get_name(), waypoint_out_buffer_.size());
         for (auto &w : waypoint_out_buffer_) {
-          RCLCPP_INFO(this->get_logger(), "[%s]:        %.2f, %.2f, %.2f", this->get_name(), w.x(), w.y(), w.z());
+          RCLCPP_INFO(this->get_logger(), "[%s]:        %.2f, %.2f, %.2f, %.2f", this->get_name(), w.x(), w.y(), w.z(), w.w());
         }
         visualizePath(waypoint_out_buffer_);
         auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, false);
@@ -822,7 +847,7 @@ void Navigation::navigationRoutine(void) {
 //}
 
 /* waypointsToPathSrv //{ */
-std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPathSrv(const std::vector<octomap::point3d> waypoints, bool use_first) {
+std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPathSrv(const std::vector<Eigen::Vector4d> waypoints, bool use_first) {
   nav_msgs::msg::Path msg;
   msg.header.stamp    = this->get_clock()->now();
   msg.header.frame_id = parent_frame_;
@@ -862,10 +887,11 @@ bool Navigation::waypointFutureCallback(rclcpp::Client<fog_msgs::srv::WaypointTo
   if (result->success) {
     RCLCPP_INFO(this->get_logger(), "[%s]: Coordinate transform returned: %.2f, %.2f", this->get_name(), result->local_x, result->local_y);
 
-    octomap::point3d point;
-    point.x() = result->local_x;
-    point.y() = result->local_y;
-    point.z() = result->local_z;
+    Eigen::Vector4d point;
+    point[0] = result->local_x;
+    point[1] = result->local_y;
+    point[2] = result->local_z;
+    /* point[3] = result->yaw; */
 
     if (point.z() < min_altitude_) {
       RCLCPP_WARN(this->get_logger(), "[%s]: Goal Z coordinate (%.2f) is below the minimum allowed altitude (%.2f)", this->get_name(), point.z(),
@@ -907,10 +933,11 @@ bool Navigation::pathFutureCallback(rclcpp::Client<fog_msgs::srv::PathToLocal>::
 
     for (auto &pose : result->path.poses) {
 
-      octomap::point3d point;
-      point.x() = pose.pose.position.x;
-      point.y() = pose.pose.position.y;
-      point.z() = pose.pose.position.z;
+      Eigen::Vector4d point;
+      point[0] = pose.pose.position.x;
+      point[1] = pose.pose.position.y;
+      point[2] = pose.pose.position.z;
+      point[3] = getYaw(pose.pose.orientation);
 
       if (point.z() < min_altitude_) {
         RCLCPP_WARN(this->get_logger(), "[%s]: Goal Z coordinate (%.2f) is below the minimum allowed altitude (%.2f)", this->get_name(), point.z(),
@@ -1036,7 +1063,7 @@ void Navigation::visualizeExpansions(const std::unordered_set<navigation::Node, 
 //}
 
 /* visualizePath //{ */
-void Navigation::visualizePath(const std::vector<octomap::point3d> waypoints) {
+void Navigation::visualizePath(const std::vector<Eigen::Vector4d> waypoints) {
   RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Visualizing path", this->get_name());
   visualization_msgs::msg::Marker msg;
   msg.header.frame_id    = parent_frame_;
@@ -1068,7 +1095,7 @@ void Navigation::visualizePath(const std::vector<octomap::point3d> waypoints) {
 //}
 
 /* visualizeGoals //{ */
-void Navigation::visualizeGoals(const std::vector<octomap::point3d> waypoints, const octomap::point3d current_goal) {
+void Navigation::visualizeGoals(const std::vector<Eigen::Vector4d> waypoints, const Eigen::Vector4d current_goal) {
   RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Visualizing goals", this->get_name());
   visualization_msgs::msg::Marker msg;
   msg.header.frame_id    = parent_frame_;
@@ -1087,7 +1114,7 @@ void Navigation::visualizeGoals(const std::vector<octomap::point3d> waypoints, c
     p.x                         = w.x();
     p.y                         = w.y();
     p.z                         = w.z();
-    msg.points.push_back(p);
+    msg.points.push_back(p), w.w();
     msg.colors.push_back(c);
   }
 
