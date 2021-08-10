@@ -3,7 +3,7 @@
 <package format="3">
 
   <name>navigation</name>
-  <version>0.0.3</version>
+  <version>0.0.4</version>
   <description>Provides collision free path-planning</description>
   <maintainer email="petr.stibinger@fly4future.com">stibipet</maintainer>
   
