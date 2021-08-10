@@ -51,7 +51,7 @@ bool LeafComparator::operator()(const std::pair<octomap::OcTree::iterator, doubl
 
 /* AstarPlanner constructor //{ */
 AstarPlanner::AstarPlanner(double safe_obstacle_distance, double euclidean_distance_cutoff, double planning_tree_resolution, double distance_penalty,
-                           double greedy_penalty, double vertical_penalty, double min_altitude, double max_altitude, double timeout_threshold,
+                           double greedy_penalty, double min_altitude, double max_altitude, double timeout_threshold,
                            double max_waypoint_distance, bool unknown_is_occupied) {
 
   this->safe_obstacle_distance    = safe_obstacle_distance;
@@ -59,7 +59,6 @@ AstarPlanner::AstarPlanner(double safe_obstacle_distance, double euclidean_dista
   this->planning_tree_resolution  = planning_tree_resolution;
   this->distance_penalty          = distance_penalty;
   this->greedy_penalty            = greedy_penalty;
-  this->vertical_penalty          = vertical_penalty;
   this->min_altitude              = min_altitude;
   this->max_altitude              = max_altitude;
   this->timeout_threshold         = timeout_threshold;
@@ -335,10 +334,6 @@ bool AstarPlanner::freeStraightPath(const octomap::point3d p1, const octomap::po
       // Path goes through occupied cells
       return false;
     }
-
-    if (max_waypoint_distance > 0 && (p1 - p2).norm() >= max_waypoint_distance) {
-      return false;
-    }
   }
 
   return true;
@@ -507,19 +502,6 @@ std::vector<octomap::point3d> AstarPlanner::filterPath(const std::vector<octomap
   filtered.push_back(waypoints.back());
   //}
 
-  /* /1* padding with additional points if the distances exceed threshold //{ *1/ */
-  /* size_t waypoints_size = filtered.size(); */
-
-  /* for (size_t i = 1; i < waypoints_size; i++) { */
-  /*   if (max_waypoint_distance > 0 && distEuclidean(filtered[i], filtered[i - 1]) > max_waypoint_distance) { */
-  /*     auto direction = (filtered[i] - filtered[i - 1]).normalized() * max_waypoint_distance; */
-  /*     filtered.insert(filtered.begin() + i, filtered[i - 1] + direction); */
-  /*     waypoints_size++; */
-  /*   } */
-  /* } */
-
-  /* //} */
-
   return filtered;
 }
 //}
@@ -609,18 +591,5 @@ std::pair<octomap::point3d, bool> AstarPlanner::generateTemporaryGoal(const octo
   return {temp_goal, vertical_priority};
 }
 //}
-
-/* /1* yawToQuaternionMsg //{ *1/ */
-/* geometry_msgs::msg::Quaternion AstarPlanner::yawToQuaternionMsg(const double &yaw) { */
-/*   geometry_msgs::msg::Quaternion msg; */
-/*   Eigen::Quaterniond             q = */
-/*       Eigen::AngleAxisd(0, Eigen::Vector3d::UnitX()) * Eigen::AngleAxisd(0, Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()); */
-/*   msg.w = q.w(); */
-/*   msg.x = q.x(); */
-/*   msg.y = q.y(); */
-/*   msg.z = q.z(); */
-/*   return msg; */
-/* } */
-/* //} */
 
 }  // namespace navigation
