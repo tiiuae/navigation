@@ -12,7 +12,7 @@ param_namespace:
   vertical_penalty: 2.0
   edf_penalty: 0.2
   planning_tree_resolution: 0.4
-  max_waypoint_distance: 3.0 # [m] // or set negative to allow maximal segment length
+  max_waypoint_distance: 0.2 # [m] // or set negative to allow maximal segment length
   planning_timeout: 4.5 # [s]
   replanning_limit: 3 # number of repeated attempts
   replanning_distance: 15.0 # [m] Euclidean distance from first waypoint

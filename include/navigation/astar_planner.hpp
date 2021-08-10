@@ -21,7 +21,7 @@ enum TreeValue
 
 enum PlanningResult
 {
-  COMPLETE= 0,
+  COMPLETE = 0,
   GOAL_REACHED,
   INCOMPLETE,
   GOAL_IN_OBSTACLE,
@@ -82,8 +82,7 @@ public:
       const octomap::point3d &start_coord, const octomap::point3d &goal_coord, std::shared_ptr<octomap::OcTree> mapping_tree, double timeout,
       std::function<void(const octomap::OcTree &)> visualizeTree,
       std::function<void(const std::unordered_set<Node, HashFunction> &, const std::unordered_set<Node, HashFunction> &, const octomap::OcTree &)>
-           visualizeExpansions,
-      bool visualize);
+          visualizeExpansions);
 
 private:
   const std::vector<std::vector<int>> EXPANSION_DIRECTIONS = {{-1, -1, -1}, {-1, -1, 0}, {-1, -1, 1}, {-1, 0, -1}, {-1, 0, 0}, {-1, 0, 1}, {-1, 1, -1},
@@ -113,9 +112,11 @@ private:
 
   std::pair<octomap::point3d, bool> generateTemporaryGoal(const octomap::point3d &start, const octomap::point3d &goal, octomap::OcTree &tree);
 
-  std::vector<octomap::point3d> postprocessPath(const std::vector<octomap::point3d> &waypoints, octomap::OcTree &tree);
+  std::vector<octomap::point3d> filterPath(const std::vector<octomap::point3d> &waypoints, octomap::OcTree &tree);
 
   std::vector<octomap::point3d> prepareOutputPath(const std::vector<octomap::OcTreeKey> &keys, octomap::OcTree &tree);
+
+  /* geometry_msgs::msg::Quaternion yawToQuaternionMsg(const double &yaw); */
 };
 
 }  // namespace navigation
