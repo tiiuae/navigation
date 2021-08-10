@@ -4,6 +4,7 @@
 
 import os
 import numpy as np
+import math
 
 import rclpy
 from rclpy.node import Node
@@ -15,21 +16,43 @@ from nav_msgs.msg import Path as NavPath
 from fog_msgs.srv import Path as SetPath
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import Quaternion
 
 WAYPOINTS_LOCAL=[
-    [0,0,3],
-    [-5,4,2],
-    [7,-5,2],
-    [0,0,2]
+    [0,0,3,0],
+    [-5,4,2,0],
+    [7,-5,2,0],
+    [0,0,2,0]
 ]
 
 WAYPOINTS_GPS=[
-    [47.397708, 8.5456038, 4],
-    [47.3977, 8.5456038, 2],
-    [47.39775, 8.5456, 2],
-    [47.39758, 8.545706, 1.5],
-    [47.397708, 8.5456038, 2]
+    [47.397708, 8.5456038, 4, 0],
+    [47.3977, 8.5456038, 2, 1.5708],
+    [47.39775, 8.5456, 2, -1.5708],
+    [47.39758, 8.545706, 1.5, 3.14],
+    [47.397708, 8.5456038, 2, -3.14]
 ]
+
+def quaternion_from_euler(roll, pitch, yaw):
+    """
+    Converts euler roll, pitch, yaw to quaternion (w in last place)
+    quat = [x, y, z, w]
+    Bellow should be replaced when porting for ROS 2 Python tf_conversions is done.
+    """
+    cy = math.cos(yaw * 0.5)
+    sy = math.sin(yaw * 0.5)
+    cp = math.cos(pitch * 0.5)
+    sp = math.sin(pitch * 0.5)
+    cr = math.cos(roll * 0.5)
+    sr = math.sin(roll * 0.5)
+
+    q = Quaternion()
+    q.w = cy * cp * cr + sy * sp * sr
+    q.x = cy * cp * sr - sy * sp * cr
+    q.y = sy * cp * sr + cy * sp * cr
+    q.z = sy * cp * cr - cy * sp * sr
+
+    return q
 
 class PathPublisherNode(Node):
 
@@ -55,6 +78,8 @@ class PathPublisherNode(Node):
             point.y = float(wp[1])
             point.z = float(wp[2])
             pose.pose.position = point
+            q = quaternion_from_euler(0,0,wp[3])
+            pose.pose.orientation = q
             path.poses.append(pose)
         print('Publishing: "%s"' % path.poses)
         self.publisher.publish(path)
@@ -74,6 +99,8 @@ class PathPublisherNode(Node):
             point.y = float(wp[1])
             point.z = float(wp[2])
             pose.pose.position = point
+            q = quaternion_from_euler(0,0,wp[3])
+            pose.pose.orientation = q
             path.poses.append(pose)
         print('Calling service : "%s"' % self.client_local.srv_name)
         path_req = SetPath.Request()
@@ -96,6 +123,8 @@ class PathPublisherNode(Node):
             point.y = float(wp[1])
             point.z = float(wp[2])
             pose.pose.position = point
+            q = quaternion_from_euler(0,0,wp[3])
+            pose.pose.orientation = q
             path.poses.append(pose)
         print('Calling service : "%s"' % self.client_gps.srv_name)
         path_req = SetPath.Request()
