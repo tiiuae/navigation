@@ -44,7 +44,7 @@ enum status_t
   MOVING
 };
 
-std::string status_string[] = {"IDLE", "PLANNING", "COMMANDING", "MOVING"};
+const std::string STATUS_STRING[] = {"IDLE", "PLANNING", "COMMANDING", "MOVING"};
 
 double getYaw(const geometry_msgs::msg::Quaternion &q) {
   return atan2(2.0 * (q.z * q.w + q.x * q.y), -1.0 + 2.0 * (q.w * q.w + q.x * q.x));
@@ -772,7 +772,7 @@ void Navigation::navigationRoutine(void) {
           w_start.z()                = waypoints.first.front().z();
           double path_start_end_dist = (w_end - w_start).norm();
 
-          if (path_start_end_dist < planning_tree_resolution_ / 2.0) {
+          if (path_start_end_dist < 1.1 * planning_tree_resolution_) {
             RCLCPP_WARN(this->get_logger(), "[%s]: path too short", this->get_name());
             replanning_counter_++;
             break;
@@ -790,7 +790,7 @@ void Navigation::navigationRoutine(void) {
 
         /* FAILURE //{ */
         if (waypoints.second == FAILURE) {
-          RCLCPP_WARN(this->get_logger(), "[%s]: planner failure", this->get_name());
+          RCLCPP_WARN(this->get_logger(), "[%s]: path to goal not found", this->get_name());
           waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal_);
           replanning_counter_++;
           break;
@@ -870,7 +870,7 @@ void Navigation::navigationRoutine(void) {
   }
 
   std_msgs::msg::String msg;
-  msg.data = status_string[status_];
+  msg.data = STATUS_STRING[status_];
   status_publisher_->publish(msg);
   publishDiagnostics();
 }
@@ -969,7 +969,7 @@ void Navigation::publishDiagnostics() {
   fog_msgs::msg::NavigationDiagnostics msg;
   msg.header.stamp        = this->get_clock()->now();
   msg.header.frame_id     = parent_frame_;
-  msg.state               = status_string[status_];
+  msg.state               = STATUS_STRING[status_];
   msg.waypoints_in_buffer = waypoint_in_buffer_.size();
   msg.current_nav_goal[0] = current_goal_.x();
   msg.current_nav_goal[1] = current_goal_.y();
