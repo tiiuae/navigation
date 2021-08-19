@@ -253,6 +253,14 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
     return {prepareOutputPath(path_keys, tree), INCOMPLETE};
   }
 
+  if(!tunnel.empty()){
+    std::vector<octomap::point3d> path_to_safety;
+    path_to_safety.push_back(start_coord);
+    path_to_safety.push_back(tunnel.back());
+    printf("[Astar]: path does not exist, escaping no-go zone'\n");
+    return {path_to_safety, INCOMPLETE};
+  }
+
   printf("[Astar]: PATH DOES NOT EXIST!\n");
 
   return {std::vector<octomap::point3d>(), FAILURE};
