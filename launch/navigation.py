@@ -51,6 +51,7 @@ def generate_launch_description():
                     ("~/gps_waypoint_in", "~/gps_waypoint"),
                     ("~/gps_path_in", "~/gps_path"),
 
+                    ("~/diagnostics_out", "~/diagnostics"),
                     ("~/local_path_out", "/" + DRONE_DEVICE_ID + "/control_interface/local_path"),
                     ("~/gps_path_out", "/" + DRONE_DEVICE_ID + "/control_interface/gps_path"),
                     
