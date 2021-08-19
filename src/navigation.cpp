@@ -72,32 +72,6 @@ octomap::point3d toPoint3d(const Eigen::Vector4d &vec) {
   return p;
 }
 
-double getYaw(const geometry_msgs::msg::Quaternion &q) {
-  return atan2(2.0 * (q.z * q.w + q.x * q.y), -1.0 + 2.0 * (q.w * q.w + q.x * q.x));
-  /* Eigen::Quaterniond eq(q.w, q.x, q.y, q.z); */
-  /* auto               euler = eq.toRotationMatrix().eulerAngles(0, 1, 2); */
-  /* return euler[2]; */
-}
-
-geometry_msgs::msg::Quaternion yawToQuaternionMsg(const double &yaw) {
-  geometry_msgs::msg::Quaternion msg;
-  Eigen::Quaterniond             q =
-      Eigen::AngleAxisd(0, Eigen::Vector3d::UnitX()) * Eigen::AngleAxisd(0, Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ());
-  msg.w = q.w();
-  msg.x = q.x();
-  msg.y = q.y();
-  msg.z = q.z();
-  return msg;
-}
-
-octomap::point3d toPoint3d(const Eigen::Vector4d &vec) {
-  octomap::point3d p;
-  p.x() = vec.x();
-  p.y() = vec.y();
-  p.z() = vec.z();
-  return p;
-}
-
 /* class Navigation //{ */
 class Navigation : public rclcpp::Node {
 public:
@@ -798,7 +772,7 @@ void Navigation::navigationRoutine(void) {
           w_start.z()                = waypoints.first.front().z();
           double path_start_end_dist = (w_end - w_start).norm();
 
-          if (path_start_end_dist < planning_tree_resolution_ / 2.0) {
+          if (path_start_end_dist < 1.1 * planning_tree_resolution_) {
             RCLCPP_WARN(this->get_logger(), "[%s]: path too short", this->get_name());
             replanning_counter_++;
             break;
@@ -816,7 +790,7 @@ void Navigation::navigationRoutine(void) {
 
         /* FAILURE //{ */
         if (waypoints.second == FAILURE) {
-          RCLCPP_WARN(this->get_logger(), "[%s]: planner failure", this->get_name());
+          RCLCPP_WARN(this->get_logger(), "[%s]: path to goal not found", this->get_name());
           waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal_);
           replanning_counter_++;
           break;
@@ -995,7 +969,7 @@ void Navigation::publishDiagnostics() {
   fog_msgs::msg::NavigationDiagnostics msg;
   msg.header.stamp        = this->get_clock()->now();
   msg.header.frame_id     = parent_frame_;
-  msg.state               = status_string[status_];
+  msg.state               = STATUS_STRING[status_];
   msg.waypoints_in_buffer = waypoint_in_buffer_.size();
   msg.current_nav_goal[0] = current_goal_.x();
   msg.current_nav_goal[1] = current_goal_.y();
