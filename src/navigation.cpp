@@ -27,6 +27,7 @@
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <fog_msgs/msg/control_interface_diagnostics.hpp>
+#include <fog_msgs/msg/navigation_diagnostics.hpp>
 #include <fog_msgs/srv/waypoint_to_local.hpp>
 #include <fog_msgs/srv/path_to_local.hpp>
 
@@ -95,6 +96,7 @@ private:
 
   Eigen::Vector4d                  uav_pos_;
   Eigen::Vector4d                  current_goal_;
+  Eigen::Vector4d                  last_goal_;
   std::mutex                       octree_mutex_;
   std::shared_ptr<octomap::OcTree> octree_;
   std::mutex                       status_mutex_;
@@ -137,7 +139,8 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr path_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr goal_publisher_;
 
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_publisher_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr                status_publisher_;
+  rclcpp::Publisher<fog_msgs::msg::NavigationDiagnostics>::SharedPtr diagnostics_publisher_;
 
   // subscribers
   rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr                 octomap_subscriber_;
@@ -193,6 +196,8 @@ private:
   std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPathSrv(std::vector<Eigen::Vector4d> waypoints, bool use_first = true);
   void                                          hover();
 
+  void publishDiagnostics();
+
   template <class T>
   bool parse_param(std::string param_name, T &param_dest);
 };
@@ -235,9 +240,10 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   field_publisher_       = this->create_publisher<visualization_msgs::msg::Marker>("~/field_markers_out", 1);
   binary_tree_publisher_ = this->create_publisher<visualization_msgs::msg::Marker>("~/binary_tree_markers_out", 1);
   expansion_publisher_   = this->create_publisher<visualization_msgs::msg::Marker>("~/expansion_markers_out", 1);
-  path_publisher_        = this->create_publisher<visualization_msgs::msg::Marker>("~/path_markers_out", 10);
-  goal_publisher_        = this->create_publisher<visualization_msgs::msg::Marker>("~/goal_markers_out", 10);
-  status_publisher_      = this->create_publisher<std_msgs::msg::String>("~/status_out", 10);
+  path_publisher_        = this->create_publisher<visualization_msgs::msg::Marker>("~/path_markers_out", 1);
+  goal_publisher_        = this->create_publisher<visualization_msgs::msg::Marker>("~/goal_markers_out", 1);
+  status_publisher_      = this->create_publisher<std_msgs::msg::String>("~/status_out", 1);
+  diagnostics_publisher_ = this->create_publisher<fog_msgs::msg::NavigationDiagnostics>("~/diagnostics_out", 5);
 
   // subscribers
   octomap_subscriber_             = this->create_subscription<octomap_msgs::msg::Octomap>("~/octomap_in", 1, std::bind(&Navigation::octomapCallback, this, _1));
@@ -708,6 +714,7 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
+        last_goal_    = current_goal_;
         current_goal_ = waypoint_in_buffer_.front();
         waypoint_in_buffer_.erase(waypoint_in_buffer_.begin());
         RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint [%.2f, %.2f, %.2f, %.2f] set as a next goal", this->get_name(), current_goal_[0], current_goal_[1],
@@ -865,7 +872,8 @@ void Navigation::navigationRoutine(void) {
   std_msgs::msg::String msg;
   msg.data = status_string[status_];
   status_publisher_->publish(msg);
-}  // namespace navigation
+  publishDiagnostics();
+}
 //}
 
 /* resamplePath //{ */
@@ -953,6 +961,23 @@ void Navigation::hover() {
   auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, true);
   auto call_result   = local_path_client_->async_send_request(waypoints_srv);
   waypoint_out_buffer_.clear();
+}
+//}
+
+/* publishDiagnostics //{ */
+void Navigation::publishDiagnostics() {
+  fog_msgs::msg::NavigationDiagnostics msg;
+  msg.header.stamp        = this->get_clock()->now();
+  msg.header.frame_id     = parent_frame_;
+  msg.state               = status_string[status_];
+  msg.waypoints_in_buffer = waypoint_in_buffer_.size();
+  msg.current_nav_goal[0] = current_goal_.x();
+  msg.current_nav_goal[1] = current_goal_.y();
+  msg.current_nav_goal[2] = current_goal_.z();
+  msg.last_nav_goal[0]    = last_goal_.x();
+  msg.last_nav_goal[1]    = last_goal_.y();
+  msg.last_nav_goal[2]    = last_goal_.z();
+  diagnostics_publisher_->publish(msg);
 }
 //}
 
