@@ -122,6 +122,7 @@ private:
 
   Eigen::Vector4d                  uav_pos_;
   Eigen::Vector4d                  current_goal_;
+  Eigen::Vector4d                  last_goal_;
   std::mutex                       octree_mutex_;
   std::shared_ptr<octomap::OcTree> octree_;
   std::mutex                       status_mutex_;
@@ -220,6 +221,8 @@ private:
 
   std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPathSrv(std::vector<Eigen::Vector4d> waypoints, bool use_first = true);
   void                                          hover();
+
+  void publishDiagnostics();
 
   template <class T>
   bool parse_param(std::string param_name, T &param_dest);
@@ -737,6 +740,7 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
+        last_goal_    = current_goal_;
         current_goal_ = waypoint_in_buffer_.front();
         waypoint_in_buffer_.erase(waypoint_in_buffer_.begin());
         RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint [%.2f, %.2f, %.2f, %.2f] set as a next goal", this->get_name(), current_goal_[0], current_goal_[1],
@@ -894,7 +898,8 @@ void Navigation::navigationRoutine(void) {
   std_msgs::msg::String msg;
   msg.data = STATUS_STRING[status_];
   status_publisher_->publish(msg);
-}  // namespace navigation
+  publishDiagnostics();
+}
 //}
 
 /* resamplePath //{ */
@@ -990,7 +995,7 @@ void Navigation::publishDiagnostics() {
   fog_msgs::msg::NavigationDiagnostics msg;
   msg.header.stamp        = this->get_clock()->now();
   msg.header.frame_id     = parent_frame_;
-  msg.state               = STATUS_STRING[status_];
+  msg.state               = status_string[status_];
   msg.waypoints_in_buffer = waypoint_in_buffer_.size();
   msg.current_nav_goal[0] = current_goal_.x();
   msg.current_nav_goal[1] = current_goal_.y();
