@@ -20,8 +20,6 @@ find_package(fog_msgs 0.0.5 EXACT REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
-find_package(tf2 REQUIRED)
-find_package(tf2_ros REQUIRED)
 find_package(octomap REQUIRED)
 find_package(octomap_msgs REQUIRED)
 find_package(dynamicEDT3D REQUIRED)
@@ -55,8 +53,6 @@ ament_target_dependencies(navigation
   nav_msgs 
   geometry_msgs 
   visualization_msgs
-  tf2
-  tf2_ros
   octomap
   octomap_msgs
   dynamicEDT3D
