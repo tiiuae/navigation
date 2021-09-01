@@ -124,6 +124,7 @@ private:
   double planning_timeout_;
   int    replanning_limit_;
   double replanning_distance_;
+  double main_update_rate_;
 
   // visualization params
   double tree_points_scale_;
@@ -209,29 +210,38 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   RCLCPP_INFO(this->get_logger(), "[%s]: Initializing...", this->get_name());
 
   /* parse params from config file //{ */
-  parse_param("planning.euclidean_distance_cutoff", euclidean_distance_cutoff_);
-  parse_param("planning.safe_obstacle_distance", safe_obstacle_distance_);
-  parse_param("planning.unknown_is_occupied", unknown_is_occupied_);
-  parse_param("planning.navigation_tolerance", navigation_tolerance_);
-  parse_param("planning.min_altitude", min_altitude_);
-  parse_param("planning.max_altitude", max_altitude_);
-  parse_param("planning.max_goal_distance", max_goal_distance_);
-  parse_param("planning.distance_penalty", distance_penalty_);
-  parse_param("planning.greedy_penalty", greedy_penalty_);
-  parse_param("planning.planning_tree_resolution", planning_tree_resolution_);
-  parse_param("planning.max_waypoint_distance", max_waypoint_distance_);
-  parse_param("planning.planning_timeout", planning_timeout_);
-  parse_param("planning.replanning_limit", replanning_limit_);
-  parse_param("planning.replanning_distance", replanning_distance_);
-  parse_param("planning.override_previous_commands", override_previous_commands_);
+  RCLCPP_INFO(this->get_logger(), "-------------- Loading parameters --------------");
+  bool loaded_successfully = true;
+  loaded_successfully &= parse_param("planning.euclidean_distance_cutoff", euclidean_distance_cutoff_);
+  loaded_successfully &= parse_param("planning.safe_obstacle_distance", safe_obstacle_distance_);
+  loaded_successfully &= parse_param("planning.unknown_is_occupied", unknown_is_occupied_);
+  loaded_successfully &= parse_param("planning.navigation_tolerance", navigation_tolerance_);
+  loaded_successfully &= parse_param("planning.min_altitude", min_altitude_);
+  loaded_successfully &= parse_param("planning.max_altitude", max_altitude_);
+  loaded_successfully &= parse_param("planning.max_goal_distance", max_goal_distance_);
+  loaded_successfully &= parse_param("planning.distance_penalty", distance_penalty_);
+  loaded_successfully &= parse_param("planning.greedy_penalty", greedy_penalty_);
+  loaded_successfully &= parse_param("planning.planning_tree_resolution", planning_tree_resolution_);
+  loaded_successfully &= parse_param("planning.max_waypoint_distance", max_waypoint_distance_);
+  loaded_successfully &= parse_param("planning.pla nning_timeout", planning_timeout_);
+  loaded_successfully &= parse_param("planning.replanning_limit", replanning_limit_);
+  loaded_successfully &= parse_param("planning.replanning_distance", replanning_distance_);
+  loaded_successfully &= parse_param("planning.override_previous_commands", override_previous_commands_);
+  loaded_successfully &= parse_param("planning.main_update_rate", main_update_rate_);
 
-  parse_param("visualization.visualize_planner", visualize_planner_);
-  parse_param("visualization.show_unoccupied", show_unoccupied_);
-  parse_param("visualization.tree_points_scale", tree_points_scale_);
-  parse_param("visualization.field_points_scale", field_points_scale_);
-  parse_param("visualization.expansions_points_scale", expansions_points_scale_);
-  parse_param("visualization.path_points_scale", path_points_scale_);
-  parse_param("visualization.goal_points_scale", goal_points_scale_);
+  loaded_successfully &= parse_param("visualization.visualize_planner", visualize_planner_);
+  loaded_successfully &= parse_param("visualization.show_unoccupied", show_unoccupied_);
+  loaded_successfully &= parse_param("visualization.tree_points_scale", tree_points_scale_);
+  loaded_successfully &= parse_param("visualization.field_points_scale", field_points_scale_);
+  loaded_successfully &= parse_param("visualization.expansions_points_scale", expansions_points_scale_);
+  loaded_successfully &= parse_param("visualization.path_points_scale", path_points_scale_);
+
+  if (!loaded_successfully) {
+    const std::string str = "Could not load all non-optional parameters. Shutting down.";
+    RCLCPP_ERROR(this->get_logger(), str);
+    rclcpp::shutdown();
+    return;
+  }
   //}
 
   callback_group_ = this->create_callback_group(rclcpp::callback_group::CallbackGroupType::Reentrant);
@@ -267,7 +277,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   gps_path_service_       = this->create_service<fog_msgs::srv::Path>("~/gps_path_in", std::bind(&Navigation::gpsPathCallback, this, _1, _2));
 
   // timers
-  execution_timer_ = this->create_wall_timer(std::chrono::duration<double>(1.0 / 10.0), std::bind(&Navigation::navigationRoutine, this), callback_group_);
+  execution_timer_ = this->create_wall_timer(std::chrono::duration<double>(1.0 / main_update_rate_), std::bind(&Navigation::navigationRoutine, this), callback_group_);
 
   if (max_waypoint_distance_ <= 0) {
     max_waypoint_distance_ = replanning_distance_;
