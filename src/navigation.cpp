@@ -104,6 +104,7 @@ private:
 
   std::vector<Eigen::Vector4d> waypoint_out_buffer_;
   std::vector<Eigen::Vector4d> waypoint_in_buffer_;
+  int                          current_waypoint_id_;
 
   rclcpp::CallbackGroup::SharedPtr callback_group_;
   rclcpp::TimerBase::SharedPtr     execution_timer_;
@@ -187,14 +188,14 @@ private:
   void visualizeTree(const octomap::OcTree &tree);
   void visualizeExpansions(const std::unordered_set<navigation::Node, HashFunction> open, const std::unordered_set<navigation::Node, HashFunction> &closed,
                            const octomap::OcTree &tree);
-  void visualizePath(const std::vector<Eigen::Vector4d> waypoints);
-  void visualizeGoals(const std::vector<Eigen::Vector4d> waypoints, const Eigen::Vector4d current_goal);
+  void visualizePath(const std::vector<Eigen::Vector4d> &waypoints);
+  void visualizeGoals(const int current_waypoint_id, const std::vector<Eigen::Vector4d> &waypoints, const Eigen::Vector4d current_goal);
 
   std_msgs::msg::ColorRGBA generateColor(const double r, const double g, const double b, const double a);
 
   std::vector<Eigen::Vector4d> resamplePath(const std::vector<octomap::point3d> &waypoints, const double start_yaw, const double end_yaw);
 
-  std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPathSrv(std::vector<Eigen::Vector4d> waypoints, bool use_first = true);
+  std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPathSrv(const std::vector<Eigen::Vector4d> &waypoints, bool use_first = true);
   void                                          hover();
 
   void publishDiagnostics();
@@ -223,7 +224,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   loaded_successfully &= parse_param("planning.greedy_penalty", greedy_penalty_);
   loaded_successfully &= parse_param("planning.planning_tree_resolution", planning_tree_resolution_);
   loaded_successfully &= parse_param("planning.max_waypoint_distance", max_waypoint_distance_);
-  loaded_successfully &= parse_param("planning.pla nning_timeout", planning_timeout_);
+  loaded_successfully &= parse_param("planning.planning_timeout", planning_timeout_);
   loaded_successfully &= parse_param("planning.replanning_limit", replanning_limit_);
   loaded_successfully &= parse_param("planning.replanning_distance", replanning_distance_);
   loaded_successfully &= parse_param("planning.override_previous_commands", override_previous_commands_);
@@ -369,6 +370,7 @@ void Navigation::gotoCallback(const nav_msgs::msg::Path::UniquePtr msg) {
   RCLCPP_INFO(this->get_logger(), "[%s]: Recieved %ld waypoints", this->get_name(), msg->poses.size());
 
   waypoint_in_buffer_.clear();
+  current_waypoint_id_ = 0;
   for (const auto &p : msg->poses) {
     Eigen::Vector4d point;
     point[0] = p.pose.position.x;
@@ -405,7 +407,7 @@ bool Navigation::gotoTriggerCallback([[maybe_unused]] const std::shared_ptr<std_
     return true;
   }
 
-  if (waypoint_in_buffer_.empty()) {
+  if (current_waypoint_id_ >= int(waypoint_in_buffer_.size()) || waypoint_in_buffer_.empty()) {
     response->message = "Goto rejected, no waypoint provided";
     response->success = false;
     RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
@@ -474,6 +476,7 @@ bool Navigation::localPathCallback([[maybe_unused]] const std::shared_ptr<fog_ms
   }
 
   waypoint_in_buffer_.clear();
+  current_waypoint_id_ = 0;
   for (const auto &p : request->path.poses) {
     Eigen::Vector4d point;
     point[0] = p.pose.position.x;
@@ -582,6 +585,7 @@ bool Navigation::localWaypointCallback([[maybe_unused]] const std::shared_ptr<fo
   }
 
   waypoint_in_buffer_.clear();
+  current_waypoint_id_ = 0;
   Eigen::Vector4d point;
   point[0] = request->goal[0];
   point[1] = request->goal[1];
@@ -718,19 +722,19 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
-        if (waypoint_in_buffer_.empty()) {
+        if (current_waypoint_id_ >= int(waypoint_in_buffer_.size()) || waypoint_in_buffer_.empty()) {
           RCLCPP_INFO(this->get_logger(), "[%s]: All navigation goals have been visited", this->get_name());
           status_ = IDLE;
           break;
         }
 
         last_goal_    = current_goal_;
-        current_goal_ = waypoint_in_buffer_.front();
-        waypoint_in_buffer_.erase(waypoint_in_buffer_.begin());
+        current_goal_ = waypoint_in_buffer_[current_waypoint_id_];
+        current_waypoint_id_ ++;
         RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint [%.2f, %.2f, %.2f, %.2f] set as a next goal", this->get_name(), current_goal_[0], current_goal_[1],
                     current_goal_[2], current_goal_[3]);
 
-        visualizeGoals(waypoint_in_buffer_, current_goal_);
+        visualizeGoals(current_waypoint_id_, waypoint_in_buffer_, current_goal_);
 
         if (replanning_counter_ >= replanning_limit_) {
           RCLCPP_ERROR(this->get_logger(),
@@ -768,7 +772,7 @@ void Navigation::navigationRoutine(void) {
 
         /* INCOMPLETE //{ */
         if (waypoints.second == INCOMPLETE) {
-          waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal_);
+          current_waypoint_id_ --;
 
           if (waypoints.first.size() < 2) {
             RCLCPP_WARN(this->get_logger(), "[%s]: path not found", this->get_name());
@@ -801,7 +805,7 @@ void Navigation::navigationRoutine(void) {
         /* FAILURE //{ */
         if (waypoints.second == FAILURE) {
           RCLCPP_WARN(this->get_logger(), "[%s]: path to goal not found", this->get_name());
-          waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal_);
+          current_waypoint_id_ --;
           replanning_counter_++;
           break;
         }
@@ -816,7 +820,7 @@ void Navigation::navigationRoutine(void) {
             waypoint_out_buffer_.push_back(w);
           } else {
             RCLCPP_INFO(this->get_logger(), "[%s]: Path exceeding replanning distance", this->get_name());
-            waypoint_in_buffer_.insert(waypoint_in_buffer_.begin(), current_goal_);
+            current_waypoint_id_ --;
             output_current_goal = false;
             break;
           }
@@ -940,7 +944,7 @@ std::vector<Eigen::Vector4d> Navigation::resamplePath(const std::vector<octomap:
 //}
 
 /* waypointsToPathSrv //{ */
-std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPathSrv(const std::vector<Eigen::Vector4d> waypoints, bool use_first) {
+std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPathSrv(const std::vector<Eigen::Vector4d> &waypoints, bool use_first) {
   nav_msgs::msg::Path msg;
   msg.header.stamp    = this->get_clock()->now();
   msg.header.frame_id = parent_frame_;
@@ -965,7 +969,6 @@ std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPathSrv(con
 
 /* hover //{ */
 void Navigation::hover() {
-  waypoint_in_buffer_.clear();
   waypoint_out_buffer_.clear();
   waypoint_out_buffer_.push_back(uav_pos_);
   auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, true);
@@ -981,6 +984,7 @@ void Navigation::publishDiagnostics() {
   msg.header.frame_id     = parent_frame_;
   msg.state               = STATUS_STRING[status_];
   msg.waypoints_in_buffer = waypoint_in_buffer_.size();
+  msg.current_waypoint_id = current_waypoint_id_;
   msg.current_nav_goal[0] = current_goal_.x();
   msg.current_nav_goal[1] = current_goal_.y();
   msg.current_nav_goal[2] = current_goal_.z();
@@ -1174,7 +1178,7 @@ void Navigation::visualizeExpansions(const std::unordered_set<navigation::Node, 
 //}
 
 /* visualizePath //{ */
-void Navigation::visualizePath(const std::vector<Eigen::Vector4d> waypoints) {
+void Navigation::visualizePath(const std::vector<Eigen::Vector4d> &waypoints) {
   RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Visualizing path", this->get_name());
   visualization_msgs::msg::Marker msg;
   msg.header.frame_id    = parent_frame_;
@@ -1206,7 +1210,7 @@ void Navigation::visualizePath(const std::vector<Eigen::Vector4d> waypoints) {
 //}
 
 /* visualizeGoals //{ */
-void Navigation::visualizeGoals(const std::vector<Eigen::Vector4d> waypoints, const Eigen::Vector4d current_goal) {
+void Navigation::visualizeGoals(const int current_waypoint_id, const std::vector<Eigen::Vector4d> &waypoints, const Eigen::Vector4d current_goal) {
   RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Visualizing goals", this->get_name());
   visualization_msgs::msg::Marker msg;
   msg.header.frame_id    = parent_frame_;
@@ -1219,7 +1223,8 @@ void Navigation::visualizeGoals(const std::vector<Eigen::Vector4d> waypoints, co
   msg.scale.x            = goal_points_scale_;
   msg.scale.y            = goal_points_scale_;
 
-  for (const auto &w : waypoints) {
+  for (size_t id = current_waypoint_id; id < waypoints.size(); id++) {
+    const Eigen::Vector4d w = waypoints[id];
     geometry_msgs::msg::Point p;
     std_msgs::msg::ColorRGBA  c = generateColor(0.1, 0.3, 0.7, 1.0);
     p.x                         = w.x();
