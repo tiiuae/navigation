@@ -24,8 +24,6 @@
   <depend>fog_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>visualization_msgs</depend>
-  <depend>tf2</depend>
-  <depend>tf2_ros</depend>
   <depend>octomap</depend>
   <depend>octomap_msgs</depend>
   <depend>dynamicEDT3D</depend>
