@@ -199,7 +199,7 @@ private:
   void publishDiagnostics();
 
   template <class T>
-  bool parse_param(std::string param_name, T &param_dest);
+  bool parse_param(const std::string &param_name, T &param_dest);
 };
 //}
 
@@ -209,29 +209,29 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   RCLCPP_INFO(this->get_logger(), "[%s]: Initializing...", this->get_name());
 
   /* parse params from config file //{ */
-  parse_param("euclidean_distance_cutoff", euclidean_distance_cutoff_);
-  parse_param("safe_obstacle_distance", safe_obstacle_distance_);
-  parse_param("unknown_is_occupied", unknown_is_occupied_);
-  parse_param("navigation_tolerance", navigation_tolerance_);
-  parse_param("min_altitude", min_altitude_);
-  parse_param("max_altitude", max_altitude_);
-  parse_param("max_goal_distance", max_goal_distance_);
-  parse_param("distance_penalty", distance_penalty_);
-  parse_param("greedy_penalty", greedy_penalty_);
-  parse_param("planning_tree_resolution", planning_tree_resolution_);
-  parse_param("max_waypoint_distance", max_waypoint_distance_);
-  parse_param("planning_timeout", planning_timeout_);
-  parse_param("replanning_limit", replanning_limit_);
-  parse_param("replanning_distance", replanning_distance_);
-  parse_param("override_previous_commands", override_previous_commands_);
+  parse_param("planning.euclidean_distance_cutoff", euclidean_distance_cutoff_);
+  parse_param("planning.safe_obstacle_distance", safe_obstacle_distance_);
+  parse_param("planning.unknown_is_occupied", unknown_is_occupied_);
+  parse_param("planning.navigation_tolerance", navigation_tolerance_);
+  parse_param("planning.min_altitude", min_altitude_);
+  parse_param("planning.max_altitude", max_altitude_);
+  parse_param("planning.max_goal_distance", max_goal_distance_);
+  parse_param("planning.distance_penalty", distance_penalty_);
+  parse_param("planning.greedy_penalty", greedy_penalty_);
+  parse_param("planning.planning_tree_resolution", planning_tree_resolution_);
+  parse_param("planning.max_waypoint_distance", max_waypoint_distance_);
+  parse_param("planning.planning_timeout", planning_timeout_);
+  parse_param("planning.replanning_limit", replanning_limit_);
+  parse_param("planning.replanning_distance", replanning_distance_);
+  parse_param("planning.override_previous_commands", override_previous_commands_);
 
-  parse_param("visualize_planner", visualize_planner_);
-  parse_param("show_unoccupied", show_unoccupied_);
-  parse_param("tree_points_scale", tree_points_scale_);
-  parse_param("field_points_scale", field_points_scale_);
-  parse_param("expansions_points_scale", expansions_points_scale_);
-  parse_param("path_points_scale", path_points_scale_);
-  parse_param("goal_points_scale", goal_points_scale_);
+  parse_param("visualization.visualize_planner", visualize_planner_);
+  parse_param("visualization.show_unoccupied", show_unoccupied_);
+  parse_param("visualization.tree_points_scale", tree_points_scale_);
+  parse_param("visualization.field_points_scale", field_points_scale_);
+  parse_param("visualization.expansions_points_scale", expansions_points_scale_);
+  parse_param("visualization.path_points_scale", path_points_scale_);
+  parse_param("visualization.goal_points_scale", goal_points_scale_);
   //}
 
   callback_group_ = this->create_callback_group(rclcpp::callback_group::CallbackGroupType::Reentrant);
@@ -1247,10 +1247,9 @@ std_msgs::msg::ColorRGBA Navigation::generateColor(const double r, const double 
 
 /* parse_param //{ */
 template <class T>
-bool Navigation::parse_param(std::string param_name, T &param_dest) {
-  const std::string param_path = "param_namespace." + param_name;
-  this->declare_parameter(param_path);
-  if (!this->get_parameter(param_path, param_dest)) {
+bool Navigation::parse_param(const std::string &param_name, T &param_dest) {
+  this->declare_parameter(param_name);
+  if (!this->get_parameter(param_name, param_dest)) {
     RCLCPP_ERROR(this->get_logger(), "[%s]: Could not load param '%s'", this->get_name(), param_name.c_str());
     return false;
   } else {
@@ -1259,12 +1258,12 @@ bool Navigation::parse_param(std::string param_name, T &param_dest) {
   return true;
 }
 
-template bool Navigation::parse_param<int>(std::string param_name, int &param_dest);
-template bool Navigation::parse_param<double>(std::string param_name, double &param_dest);
-template bool Navigation::parse_param<float>(std::string param_name, float &param_dest);
-template bool Navigation::parse_param<std::string>(std::string param_name, std::string &param_dest);
-template bool Navigation::parse_param<bool>(std::string param_name, bool &param_dest);
-template bool Navigation::parse_param<unsigned int>(std::string param_name, unsigned int &param_dest);
+template bool Navigation::parse_param<int>(const std::string &param_name, int &param_dest);
+template bool Navigation::parse_param<double>(const std::string &param_name, double &param_dest);
+template bool Navigation::parse_param<float>(const std::string &param_name, float &param_dest);
+template bool Navigation::parse_param<std::string>(const std::string &param_name, std::string &param_dest);
+template bool Navigation::parse_param<bool>(const std::string &param_name, bool &param_dest);
+template bool Navigation::parse_param<unsigned int>(const std::string &param_name, unsigned int &param_dest);
 //}
 
 }  // namespace navigation
