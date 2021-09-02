@@ -28,6 +28,7 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <fog_msgs/msg/control_interface_diagnostics.hpp>
 #include <fog_msgs/msg/navigation_diagnostics.hpp>
+#include <fog_msgs/msg/obstacle_sectors.hpp>
 #include <fog_msgs/srv/waypoint_to_local.hpp>
 #include <fog_msgs/srv/path_to_local.hpp>
 
@@ -72,6 +73,10 @@ octomap::point3d toPoint3d(const Eigen::Vector4d &vec) {
   return p;
 }
 
+double timeToSec(const int64_t nanoseconds){
+  return nanoseconds / 1e9;
+}
+
 /* class Navigation //{ */
 class Navigation : public rclcpp::Node {
 public:
@@ -86,6 +91,7 @@ private:
   bool visualize_planner_           = true;
   bool show_unoccupied_             = false;
   bool override_previous_commands_  = false;
+  bool bumper_active_               = false;
 
   std::string parent_frame_;
   int         replanning_counter_ = 0;
@@ -98,8 +104,8 @@ private:
   Eigen::Vector4d                  current_goal_;
   Eigen::Vector4d                  last_goal_;
   std::mutex                       octree_mutex_;
+  std::mutex                       bumper_mutex_;
   std::shared_ptr<octomap::OcTree> octree_;
-  std::mutex                       status_mutex_;
   status_t                         status_ = IDLE;
 
   std::vector<Eigen::Vector4d> waypoint_out_buffer_;
@@ -109,6 +115,8 @@ private:
   rclcpp::CallbackGroup::SharedPtr callback_group_;
   rclcpp::TimerBase::SharedPtr     execution_timer_;
   void                             navigationRoutine(void);
+
+  std::unique_ptr<fog_msgs::msg::ObstacleSectors> bumper_msg_;
 
   // params
   double euclidean_distance_cutoff_;
@@ -126,6 +134,7 @@ private:
   int    replanning_limit_;
   double replanning_distance_;
   double main_update_rate_;
+  bool   bumper_enabled_;
 
   // visualization params
   double tree_points_scale_;
@@ -149,12 +158,14 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr                    odometry_subscriber_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr                        goto_subscriber_;
   rclcpp::Subscription<fog_msgs::msg::ControlInterfaceDiagnostics>::SharedPtr control_diagnostics_subscriber_;
+  rclcpp::Subscription<fog_msgs::msg::ObstacleSectors>::SharedPtr             bumper_subscriber_;
 
   // subscriber callbacks
   void octomapCallback(const octomap_msgs::msg::Octomap::UniquePtr msg);
   void odometryCallback(const nav_msgs::msg::Odometry::UniquePtr msg);
   void gotoCallback(const nav_msgs::msg::Path::UniquePtr msg);
   void controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfaceDiagnostics::UniquePtr msg);
+  void bumperCallback(const fog_msgs::msg::ObstacleSectors::UniquePtr msg);
 
   // services provided
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr goto_trigger_service_;
@@ -200,6 +211,8 @@ private:
 
   void publishDiagnostics();
 
+  bool bumperCheckObstacles(const fog_msgs::msg::ObstacleSectors &bumper_msg);
+
   template <class T>
   bool parse_param(const std::string &param_name, T &param_dest);
 };
@@ -237,6 +250,8 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   loaded_successfully &= parse_param("visualization.expansions_points_scale", expansions_points_scale_);
   loaded_successfully &= parse_param("visualization.path_points_scale", path_points_scale_);
 
+  loaded_successfully &= parse_param("bumper.enabled", bumper_enabled_);
+
   if (!loaded_successfully) {
     const std::string str = "Could not load all non-optional parameters. Shutting down.";
     RCLCPP_ERROR(this->get_logger(), str);
@@ -245,6 +260,9 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   }
   //}
 
+  current_waypoint_id_ = 0;
+  bumper_msg_.reset();
+  
   callback_group_ = this->create_callback_group(rclcpp::callback_group::CallbackGroupType::Reentrant);
 
   // publishers
@@ -262,6 +280,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   goto_subscriber_                = this->create_subscription<nav_msgs::msg::Path>("~/goto_in", 1, std::bind(&Navigation::gotoCallback, this, _1));
   control_diagnostics_subscriber_ = this->create_subscription<fog_msgs::msg::ControlInterfaceDiagnostics>(
       "~/control_diagnostics_in", 1, std::bind(&Navigation::controlDiagnosticsCallback, this, _1));
+  bumper_subscriber_ = this->create_subscription<fog_msgs::msg::ObstacleSectors>("~/bumper_in", 1, std::bind(&Navigation::bumperCallback, this, _1));
 
   // clients
   local_path_client_        = this->create_client<fog_msgs::srv::Path>("~/local_path_out");
@@ -331,6 +350,18 @@ void Navigation::controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfac
   RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Getting control_interface diagnostics", this->get_name());
   control_moving_ = msg->moving;
   goal_reached_   = msg->mission_finished;
+}
+//}
+
+/* bumperCallback //{ */
+void Navigation::bumperCallback(const fog_msgs::msg::ObstacleSectors::UniquePtr msg) {
+  if (!is_initialized_) {
+    return;
+  }
+
+  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Getting bumper msgs", this->get_name());
+  std::scoped_lock lock(bumper_mutex_);
+  bumper_msg_ = std::unique_ptr<fog_msgs::msg::ObstacleSectors>{new fog_msgs::msg::ObstacleSectors{*msg}};
 }
 //}
 
@@ -691,11 +722,8 @@ bool Navigation::hoverCallback([[maybe_unused]] const std::shared_ptr<std_srvs::
 
 /* navigationRoutine //{ */
 void Navigation::navigationRoutine(void) {
-
   if (is_initialized_ && getting_octomap_ && getting_control_diagnostics_ && getting_odometry_) {
-
-    std::scoped_lock lock(status_mutex_);
-
+  
     switch (status_) {
 
       /* IDLE //{ */
@@ -712,6 +740,23 @@ void Navigation::navigationRoutine(void) {
           hover();
           status_ = IDLE;
           break;
+        }
+
+        if (bumper_enabled_){
+          std::scoped_lock lock(bumper_mutex_);
+          if (bumper_msg_ == nullptr || timeToSec((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0 ){
+            RCLCPP_WARN(this->get_logger(), "[%s]: Missing bumper data calling hover.", this->get_name());
+            hover();
+            status_ = IDLE;
+            break;
+          }
+
+          bool close_obstacle_detected = bumperCheckObstacles(*bumper_msg_);
+          if (close_obstacle_detected && !bumper_active_){
+            RCLCPP_WARN(this->get_logger(), "[%s]: Activating bumper.", this->get_name());
+            bumper_active_ = true;
+          }
+
         }
 
         std::scoped_lock lock(octree_mutex_);
@@ -845,6 +890,26 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
+        if (bumper_enabled_){
+          std::scoped_lock lock(bumper_mutex_);
+          if (bumper_msg_ == nullptr || timeToSec((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0 ){
+            RCLCPP_WARN(this->get_logger(), "[%s]: Missing bumper data calling hover.", this->get_name());
+            hover();
+            status_ = IDLE;
+            break;
+          }
+
+          bool close_obstacle_detected = bumperCheckObstacles(*bumper_msg_);
+          if (close_obstacle_detected && !bumper_active_){
+            RCLCPP_WARN(this->get_logger(), "[%s]: [Bumper] - obstacle in proximity! calling hover and replanning", this->get_name());
+            hover();
+            replanning_counter_ = 0;
+            status_ = PLANNING;
+            break;
+          }
+
+        }
+
         if (waypoint_out_buffer_.size() < 1) {
           RCLCPP_WARN(this->get_logger(), "[%s]: Planning did not produce any waypoints. Retrying...", this->get_name());
           replanning_counter_++;
@@ -872,6 +937,31 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
+        if (bumper_enabled_){
+          std::scoped_lock lock(bumper_mutex_);
+          if (bumper_msg_ == nullptr || timeToSec((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0 ){
+            RCLCPP_WARN(this->get_logger(), "[%s]: Missing bumper data calling hover.", this->get_name());
+            hover();
+            status_ = IDLE;
+            break;
+          }
+
+          bool close_obstacle_detected = bumperCheckObstacles(*bumper_msg_);
+          if (!bumper_active_){
+            if (close_obstacle_detected){
+              RCLCPP_WARN(this->get_logger(), "[%s]: [Bumper] - obstacle in proximity! calling hover and replanning", this->get_name());
+              hover();
+              replanning_counter_ = 0;
+              status_ = PLANNING;
+              break;
+            }
+          }else if (!close_obstacle_detected){
+              RCLCPP_WARN(this->get_logger(), "[%s]: Deactivating bumper.", this->get_name());
+              bumper_active_ = false;
+          }
+
+        }
+
         replanning_counter_ = 0;
         if ((!control_moving_ && goal_reached_) || (uav_pos_.head<3>() - current_goal_.head<3>()).norm() <= navigation_tolerance_) {
           RCLCPP_INFO(this->get_logger(), "[%s]: End of current segment reached", this->get_name());
@@ -887,6 +977,26 @@ void Navigation::navigationRoutine(void) {
   msg.data = STATUS_STRING[status_];
   status_publisher_->publish(msg);
   publishDiagnostics();
+}
+//}
+
+/* bumperCheckObstacles //{ */
+bool Navigation::bumperCheckObstacles(const fog_msgs::msg::ObstacleSectors &bumper_msg){
+  /* double sector_size = 2 * M_PI / double(bumper_data->n_horizontal_sectors); */
+
+  for (int i = 0; i < int(bumper_msg.n_horizontal_sectors); i++) {
+
+    if (bumper_msg.sectors[i] < 0) {
+      continue;
+    }
+
+    // if the sector is under safe distance
+    if (bumper_msg.sectors[i] <= safe_obstacle_distance_) {
+      return true;
+    }
+  }
+
+  return false; 
 }
 //}
 
@@ -984,6 +1094,7 @@ void Navigation::publishDiagnostics() {
   msg.header.frame_id     = parent_frame_;
   msg.state               = STATUS_STRING[status_];
   msg.waypoints_in_buffer = waypoint_in_buffer_.size();
+  msg.bumper_active       = bumper_active_;
   msg.current_waypoint_id = current_waypoint_id_;
   msg.current_nav_goal[0] = current_goal_.x();
   msg.current_nav_goal[1] = current_goal_.y();

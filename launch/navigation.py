@@ -45,6 +45,7 @@ def generate_launch_description():
                     ("~/goto_in", "~/goto_waypoints"),
                     ("~/goto_trigger_in", "~/goto_start"),
                     ("~/control_diagnostics_in",  "/" + DRONE_DEVICE_ID + "/control_interface/diagnostics"),
+                    ("~/bumper_in",  "/" + DRONE_DEVICE_ID + "/bumper/obstacle_sectors"),
                     
                     ("~/local_waypoint_in", "~/local_waypoint"),
                     ("~/local_path_in", "~/local_path"),
