@@ -24,3 +24,6 @@ visualization:
   expansions_points_scale: 0.15
   path_points_scale: 0.18
   goal_points_scale : 0.28
+
+bumper:
+  enabled: true
