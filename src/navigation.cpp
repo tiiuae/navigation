@@ -73,7 +73,7 @@ octomap::point3d toPoint3d(const Eigen::Vector4d &vec) {
   return p;
 }
 
-double timeToSec(const int64_t nanoseconds){
+double nanosecondsToSecs(const int64_t nanoseconds){
   return nanoseconds / 1e9;
 }
 
@@ -744,7 +744,7 @@ void Navigation::navigationRoutine(void) {
 
         if (bumper_enabled_){
           std::scoped_lock lock(bumper_mutex_);
-          if (bumper_msg_ == nullptr || timeToSec((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0 ){
+          if (bumper_msg_ == nullptr || nanosecondsToSecs((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0 ){
             RCLCPP_WARN(this->get_logger(), "[%s]: Missing bumper data calling hover.", this->get_name());
             hover();
             status_ = IDLE;
@@ -762,20 +762,36 @@ void Navigation::navigationRoutine(void) {
         std::scoped_lock lock(octree_mutex_);
 
         if (octree_ == NULL || octree_->size() < 1) {
-          RCLCPP_WARN(this->get_logger(), "[%s]: Octomap is NULL or empty! Abort planning", this->get_name());
+          RCLCPP_WARN(this->get_logger(), "[%s]: Octomap is NULL or empty! Abort planning and swiching to IDLE", this->get_name());
           status_ = IDLE;
           break;
         }
 
-        if (current_waypoint_id_ >= int(waypoint_in_buffer_.size()) || waypoint_in_buffer_.empty()) {
-          RCLCPP_INFO(this->get_logger(), "[%s]: All navigation goals have been visited", this->get_name());
+        if (waypoint_in_buffer_.empty()) {
+          RCLCPP_WARN(this->get_logger(), "[%s]: No navigation goals provided. Switching to IDLE", this->get_name());
           status_ = IDLE;
           break;
         }
+
+        current_goal_ = waypoint_in_buffer_[current_waypoint_id_];
+
+        if ((uav_pos_.head<3>() - current_goal_.head<3>()).norm() <= navigation_tolerance_){
+
+          if (current_waypoint_id_ + 1 >= int(waypoint_in_buffer_.size())) {
+            RCLCPP_INFO(this->get_logger(), "[%s]: The last provided navigation goal has been visited. Switching to IDLE", this->get_name());
+            status_ = IDLE;
+            break;
+
+          }else{
+            current_waypoint_id_ ++;
+          }
+
+        }
+
 
         last_goal_    = current_goal_;
         current_goal_ = waypoint_in_buffer_[current_waypoint_id_];
-        current_waypoint_id_ ++;
+
         RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint [%.2f, %.2f, %.2f, %.2f] set as a next goal", this->get_name(), current_goal_[0], current_goal_[1],
                     current_goal_[2], current_goal_[3]);
 
@@ -817,7 +833,6 @@ void Navigation::navigationRoutine(void) {
 
         /* INCOMPLETE //{ */
         if (waypoints.second == INCOMPLETE) {
-          current_waypoint_id_ --;
 
           if (waypoints.first.size() < 2) {
             RCLCPP_WARN(this->get_logger(), "[%s]: path not found", this->get_name());
@@ -850,7 +865,6 @@ void Navigation::navigationRoutine(void) {
         /* FAILURE //{ */
         if (waypoints.second == FAILURE) {
           RCLCPP_WARN(this->get_logger(), "[%s]: path to goal not found", this->get_name());
-          current_waypoint_id_ --;
           replanning_counter_++;
           break;
         }
@@ -865,7 +879,6 @@ void Navigation::navigationRoutine(void) {
             waypoint_out_buffer_.push_back(w);
           } else {
             RCLCPP_INFO(this->get_logger(), "[%s]: Path exceeding replanning distance", this->get_name());
-            current_waypoint_id_ --;
             output_current_goal = false;
             break;
           }
@@ -892,7 +905,7 @@ void Navigation::navigationRoutine(void) {
 
         if (bumper_enabled_){
           std::scoped_lock lock(bumper_mutex_);
-          if (bumper_msg_ == nullptr || timeToSec((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0 ){
+          if (bumper_msg_ == nullptr || nanosecondsToSecs((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0 ){
             RCLCPP_WARN(this->get_logger(), "[%s]: Missing bumper data calling hover.", this->get_name());
             hover();
             status_ = IDLE;
@@ -939,7 +952,7 @@ void Navigation::navigationRoutine(void) {
 
         if (bumper_enabled_){
           std::scoped_lock lock(bumper_mutex_);
-          if (bumper_msg_ == nullptr || timeToSec((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0 ){
+          if (bumper_msg_ == nullptr || nanosecondsToSecs((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0 ){
             RCLCPP_WARN(this->get_logger(), "[%s]: Missing bumper data calling hover.", this->get_name());
             hover();
             status_ = IDLE;
@@ -949,7 +962,7 @@ void Navigation::navigationRoutine(void) {
           bool close_obstacle_detected = bumperCheckObstacles(*bumper_msg_);
           if (!bumper_active_){
             if (close_obstacle_detected){
-              RCLCPP_WARN(this->get_logger(), "[%s]: [Bumper] - obstacle in proximity! calling hover and replanning", this->get_name());
+              RCLCPP_WARN(this->get_logger(), "[%s]: [Bumper] - obstacle in proximity! Calling hover and replanning", this->get_name());
               hover();
               replanning_counter_ = 0;
               status_ = PLANNING;
@@ -969,7 +982,7 @@ void Navigation::navigationRoutine(void) {
         }
         break;
       }
-        //}
+      //}
     }
   }
 
