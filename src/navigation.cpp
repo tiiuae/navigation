@@ -264,6 +264,8 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   bumper_msg_.reset();
   
   callback_group_ = this->create_callback_group(rclcpp::callback_group::CallbackGroupType::Reentrant);
+  auto sub_opt = rclcpp::SubscriptionOptions();
+  sub_opt.callback_group = callback_group_;
 
   // publishers
   field_publisher_       = this->create_publisher<visualization_msgs::msg::Marker>("~/field_markers_out", 1);
@@ -275,12 +277,14 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   diagnostics_publisher_ = this->create_publisher<fog_msgs::msg::NavigationDiagnostics>("~/diagnostics_out", 5);
 
   // subscribers
-  octomap_subscriber_             = this->create_subscription<octomap_msgs::msg::Octomap>("~/octomap_in", 1, std::bind(&Navigation::octomapCallback, this, _1));
   odometry_subscriber_            = this->create_subscription<nav_msgs::msg::Odometry>("~/odometry_in", 1, std::bind(&Navigation::odometryCallback, this, _1));
   goto_subscriber_                = this->create_subscription<nav_msgs::msg::Path>("~/goto_in", 1, std::bind(&Navigation::gotoCallback, this, _1));
   control_diagnostics_subscriber_ = this->create_subscription<fog_msgs::msg::ControlInterfaceDiagnostics>(
       "~/control_diagnostics_in", 1, std::bind(&Navigation::controlDiagnosticsCallback, this, _1));
-  bumper_subscriber_ = this->create_subscription<fog_msgs::msg::ObstacleSectors>("~/bumper_in", 1, std::bind(&Navigation::bumperCallback, this, _1));
+  octomap_subscriber_             = this->create_subscription<octomap_msgs::msg::Octomap>(
+      "~/octomap_in", 1, std::bind(&Navigation::octomapCallback, this, _1), sub_opt);
+  bumper_subscriber_ = this->create_subscription<fog_msgs::msg::ObstacleSectors>(
+      "~/bumper_in", 1, std::bind(&Navigation::bumperCallback, this, _1), sub_opt);
 
   // clients
   local_path_client_        = this->create_client<fog_msgs::srv::Path>("~/local_path_out");
@@ -773,22 +777,6 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
-        current_goal_ = waypoint_in_buffer_[current_waypoint_id_];
-
-        if ((uav_pos_.head<3>() - current_goal_.head<3>()).norm() <= navigation_tolerance_){
-
-          if (current_waypoint_id_ + 1 >= int(waypoint_in_buffer_.size())) {
-            RCLCPP_INFO(this->get_logger(), "[%s]: The last provided navigation goal has been visited. Switching to IDLE", this->get_name());
-            status_ = IDLE;
-            break;
-
-          }else{
-            current_waypoint_id_ ++;
-          }
-
-        }
-
-
         last_goal_    = current_goal_;
         current_goal_ = waypoint_in_buffer_[current_waypoint_id_];
 
@@ -821,6 +809,16 @@ void Navigation::navigationRoutine(void) {
         /* GOAL_REACHED //{ */
         if (waypoints.second == GOAL_REACHED) {
           RCLCPP_INFO(this->get_logger(), "[%s]: Current goal reached", this->get_name());
+
+          if (current_waypoint_id_ + 1 >= int(waypoint_in_buffer_.size())) {
+            RCLCPP_INFO(this->get_logger(), "[%s]: The last provided navigation goal has been visited. Switching to IDLE", this->get_name());
+            status_ = IDLE;
+            break;
+
+          }else{
+            current_waypoint_id_ ++;
+          }
+
           break;
         }
         //}
