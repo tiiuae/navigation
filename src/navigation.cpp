@@ -1107,6 +1107,12 @@ void Navigation::publishDiagnostics() {
   msg.waypoints_in_buffer = waypoint_in_buffer_.size();
   msg.bumper_active       = bumper_active_;
   msg.current_waypoint_id = current_waypoint_id_;
+  msg.current_nav_goal[0] = current_goal_.x();
+  msg.current_nav_goal[1] = current_goal_.y();
+  msg.current_nav_goal[2] = current_goal_.z();
+  msg.last_nav_goal[0]    = last_goal_.x();
+  msg.last_nav_goal[1]    = last_goal_.y();
+  msg.last_nav_goal[2]    = last_goal_.z();
   diagnostics_publisher_->publish(msg);
 }
 //}
