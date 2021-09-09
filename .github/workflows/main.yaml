@@ -5,8 +5,6 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
-  repository_dispatch:
-    types: rebuild
 
 jobs:
   tii-deb-build:
@@ -61,14 +59,24 @@ jobs:
           jfrog rt c import "$ARTIFACTORY_TOKEN"
           jfrog rt ping
           pkg=$(find bin -name 'ros-foxy-navigation*.deb')
-          build_id="$GITHUB_SHA-$GITHUB_RUN_NUMBER"
           jfrog rt u --deb "$DISTRIBUTION/$COMPONENT/$ARCHITECTURE" \
                      --target-props COMMIT="$GITHUB_SHA" \
                      --build-name "$BUILD_NAME" \
-                     --build-number "$build_id" \
+                     --build-number "$GITHUB_SHA" \
                      "$pkg" \
                      "$ARTIFACTORY_REPO"
-          jfrog rt build-publish "$BUILD_NAME" "$build_id"
-          jfrog rt bpr "$BUILD_NAME" "$build_id" "$ARTIFACTORY_REPO" \
+          jfrog rt build-publish "$BUILD_NAME" "$GITHUB_SHA"
+          jfrog rt bpr "$BUILD_NAME" "$GITHUB_SHA" "$ARTIFACTORY_REPO" \
                        --status dev \
                        --comment "development build"
+
+      - name: trigger fog-drone build
+        env:
+          USER: ${{ secrets.DISPATCH_USER }}
+          TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+        if: github.event_name == 'push'
+        run: |
+          curl -X POST https://api.github.com/repos/tiiuae/dronsole-containers/dispatches \
+               -H 'Accept: application/vnd.github.everest-preview+json' \
+               -u $USER:$TOKEN \
+               --data '{"event_type": "rebuild-fog-drone", "client_payload": { "repository": "'"$GITHUB_REPOSITORY"'" }}'
