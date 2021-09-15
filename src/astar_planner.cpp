@@ -267,23 +267,6 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
 }
 //}
 
-/* getTunnel //{ */
-std::vector<octomap::point3d> AstarPlanner::getTunnel(const octomap::point3d &uav_coord, std::shared_ptr<octomap::OcTree> mapping_tree, double timeout) {
-  std::vector<octomap::point3d> tunnel;
-
-  printf("[Astar]: tunnelling start [%.2f, %.2f, %.2f]\n", uav_coord.x(), uav_coord.y(), uav_coord.z());
-
-  this->timeout_threshold       = timeout;
-  auto time_start_planning_tree = std::chrono::high_resolution_clock::now();
-  auto tree_with_tunnel         = createPlanningTree(mapping_tree, uav_coord, planning_tree_resolution);
-  printf("[Astar]: planning tree took %.2f s to create\n",
-         std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - time_start_planning_tree).count());
-
-  printf("[Astar]: tunnel of size %ld\n", tree_with_tunnel->second.size());
-  return tree_with_tunnel->second;
-}
-//}
-
 /* getNeighborhood() //{ */
 
 std::vector<octomap::OcTreeKey> AstarPlanner::getNeighborhood(const octomap::OcTreeKey &key, octomap::OcTree &tree) {
