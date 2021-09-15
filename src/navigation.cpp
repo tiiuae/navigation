@@ -1,6 +1,8 @@
 #include <fog_msgs/srv/path.hpp>
 #include <fog_msgs/srv/vec4.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <deque>
 #include <future>
 #include <mutex>
 #include <sstream>
@@ -42,16 +44,14 @@ enum status_t
   IDLE = 0,
   PLANNING,
   COMMANDING,
-  MOVING
+  MOVING,
+  AVOIDING
 };
 
-const std::string STATUS_STRING[] = {"IDLE", "PLANNING", "COMMANDING", "MOVING"};
+const std::string STATUS_STRING[] = {"IDLE", "PLANNING", "COMMANDING", "MOVING", "AVOIDING"};
 
 double getYaw(const geometry_msgs::msg::Quaternion &q) {
   return atan2(2.0 * (q.z * q.w + q.x * q.y), -1.0 + 2.0 * (q.w * q.w + q.x * q.x));
-  /* Eigen::Quaterniond eq(q.w, q.x, q.y, q.z); */
-  /* auto               euler = eq.toRotationMatrix().eulerAngles(0, 1, 2); */
-  /* return euler[2]; */
 }
 
 geometry_msgs::msg::Quaternion yawToQuaternionMsg(const double &yaw) {
@@ -73,7 +73,7 @@ octomap::point3d toPoint3d(const Eigen::Vector4d &vec) {
   return p;
 }
 
-double nanosecondsToSecs(const int64_t nanoseconds){
+double nanosecondsToSecs(const int64_t nanoseconds) {
   return nanoseconds / 1e9;
 }
 
@@ -87,6 +87,7 @@ private:
   bool is_initialized_              = false;
   bool getting_octomap_             = false;
   bool getting_odometry_            = false;
+  bool getting_desired_pose_        = false;
   bool getting_control_diagnostics_ = false;
   bool visualize_planner_           = true;
   bool show_unoccupied_             = false;
@@ -101,6 +102,7 @@ private:
   bool hover_requested_ = false;
 
   Eigen::Vector4d                  uav_pos_;
+  Eigen::Vector4d                  desired_pose_;
   Eigen::Vector4d                  current_goal_;
   Eigen::Vector4d                  last_goal_;
   std::mutex                       octree_mutex_;
@@ -109,8 +111,8 @@ private:
   status_t                         status_ = IDLE;
 
   std::vector<Eigen::Vector4d> waypoint_out_buffer_;
-  std::vector<Eigen::Vector4d> waypoint_in_buffer_;
-  int                          current_waypoint_id_;
+  std::deque<Eigen::Vector4d>  waypoint_in_buffer_;
+  size_t                       current_waypoint_id_;
 
   rclcpp::CallbackGroup::SharedPtr callback_group_;
   rclcpp::TimerBase::SharedPtr     execution_timer_;
@@ -130,6 +132,7 @@ private:
   double greedy_penalty_;
   double planning_tree_resolution_;
   double max_waypoint_distance_;
+  double max_yaw_step_;
   double planning_timeout_;
   int    replanning_limit_;
   double replanning_distance_;
@@ -156,6 +159,7 @@ private:
   // subscribers
   rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr                 octomap_subscriber_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr                    odometry_subscriber_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr            desired_pose_subscriber_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr                        goto_subscriber_;
   rclcpp::Subscription<fog_msgs::msg::ControlInterfaceDiagnostics>::SharedPtr control_diagnostics_subscriber_;
   rclcpp::Subscription<fog_msgs::msg::ObstacleSectors>::SharedPtr             bumper_subscriber_;
@@ -163,6 +167,7 @@ private:
   // subscriber callbacks
   void octomapCallback(const octomap_msgs::msg::Octomap::UniquePtr msg);
   void odometryCallback(const nav_msgs::msg::Odometry::UniquePtr msg);
+  void desiredPoseCallback(const geometry_msgs::msg::PoseStamped::UniquePtr msg);
   void gotoCallback(const nav_msgs::msg::Path::UniquePtr msg);
   void controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfaceDiagnostics::UniquePtr msg);
   void bumperCallback(const fog_msgs::msg::ObstacleSectors::UniquePtr msg);
@@ -200,7 +205,7 @@ private:
   void visualizeExpansions(const std::unordered_set<navigation::Node, HashFunction> open, const std::unordered_set<navigation::Node, HashFunction> &closed,
                            const octomap::OcTree &tree);
   void visualizePath(const std::vector<Eigen::Vector4d> &waypoints);
-  void visualizeGoals(const int current_waypoint_id, const std::vector<Eigen::Vector4d> &waypoints, const Eigen::Vector4d current_goal);
+  void visualizeGoals(const std::deque<Eigen::Vector4d> &waypoints);
 
   std_msgs::msg::ColorRGBA generateColor(const double r, const double g, const double b, const double a);
 
@@ -237,6 +242,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   loaded_successfully &= parse_param("planning.greedy_penalty", greedy_penalty_);
   loaded_successfully &= parse_param("planning.planning_tree_resolution", planning_tree_resolution_);
   loaded_successfully &= parse_param("planning.max_waypoint_distance", max_waypoint_distance_);
+  loaded_successfully &= parse_param("planning.max_yaw_step", max_yaw_step_);
   loaded_successfully &= parse_param("planning.planning_timeout", planning_timeout_);
   loaded_successfully &= parse_param("planning.replanning_limit", replanning_limit_);
   loaded_successfully &= parse_param("planning.replanning_distance", replanning_distance_);
@@ -249,6 +255,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   loaded_successfully &= parse_param("visualization.field_points_scale", field_points_scale_);
   loaded_successfully &= parse_param("visualization.expansions_points_scale", expansions_points_scale_);
   loaded_successfully &= parse_param("visualization.path_points_scale", path_points_scale_);
+  loaded_successfully &= parse_param("visualization.goal_points_scale", goal_points_scale_);
 
   loaded_successfully &= parse_param("bumper.enabled", bumper_enabled_);
 
@@ -262,9 +269,9 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
 
   current_waypoint_id_ = 0;
   bumper_msg_.reset();
-  
-  callback_group_ = this->create_callback_group(rclcpp::callback_group::CallbackGroupType::Reentrant);
-  auto sub_opt = rclcpp::SubscriptionOptions();
+
+  callback_group_        = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+  auto sub_opt           = rclcpp::SubscriptionOptions();
   sub_opt.callback_group = callback_group_;
 
   // publishers
@@ -277,14 +284,14 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   diagnostics_publisher_ = this->create_publisher<fog_msgs::msg::NavigationDiagnostics>("~/diagnostics_out", 5);
 
   // subscribers
-  odometry_subscriber_            = this->create_subscription<nav_msgs::msg::Odometry>("~/odometry_in", 1, std::bind(&Navigation::odometryCallback, this, _1));
+  odometry_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>("~/odometry_in", 1, std::bind(&Navigation::odometryCallback, this, _1));
+  desired_pose_subscriber_ =
+      this->create_subscription<geometry_msgs::msg::PoseStamped>("~/desired_pose_in", 1, std::bind(&Navigation::desiredPoseCallback, this, _1));
   goto_subscriber_                = this->create_subscription<nav_msgs::msg::Path>("~/goto_in", 1, std::bind(&Navigation::gotoCallback, this, _1));
   control_diagnostics_subscriber_ = this->create_subscription<fog_msgs::msg::ControlInterfaceDiagnostics>(
       "~/control_diagnostics_in", 1, std::bind(&Navigation::controlDiagnosticsCallback, this, _1));
-  octomap_subscriber_             = this->create_subscription<octomap_msgs::msg::Octomap>(
-      "~/octomap_in", 1, std::bind(&Navigation::octomapCallback, this, _1), sub_opt);
-  bumper_subscriber_ = this->create_subscription<fog_msgs::msg::ObstacleSectors>(
-      "~/bumper_in", 1, std::bind(&Navigation::bumperCallback, this, _1), sub_opt);
+  octomap_subscriber_ = this->create_subscription<octomap_msgs::msg::Octomap>("~/octomap_in", 1, std::bind(&Navigation::octomapCallback, this, _1), sub_opt);
+  bumper_subscriber_  = this->create_subscription<fog_msgs::msg::ObstacleSectors>("~/bumper_in", 1, std::bind(&Navigation::bumperCallback, this, _1), sub_opt);
 
   // clients
   local_path_client_        = this->create_client<fog_msgs::srv::Path>("~/local_path_out");
@@ -301,7 +308,8 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   gps_path_service_       = this->create_service<fog_msgs::srv::Path>("~/gps_path_in", std::bind(&Navigation::gpsPathCallback, this, _1, _2));
 
   // timers
-  execution_timer_ = this->create_wall_timer(std::chrono::duration<double>(1.0 / main_update_rate_), std::bind(&Navigation::navigationRoutine, this), callback_group_);
+  execution_timer_ =
+      this->create_wall_timer(std::chrono::duration<double>(1.0 / main_update_rate_), std::bind(&Navigation::navigationRoutine, this), callback_group_);
 
   if (max_waypoint_distance_ <= 0) {
     max_waypoint_distance_ = replanning_distance_;
@@ -342,6 +350,21 @@ void Navigation::odometryCallback(const nav_msgs::msg::Odometry::UniquePtr msg) 
   uav_pos_[1] = msg->pose.pose.position.y;
   uav_pos_[2] = msg->pose.pose.position.z;
   uav_pos_[3] = getYaw(msg->pose.pose.orientation);
+}
+//}
+
+/* desiredPoseCallback //{ */
+void Navigation::desiredPoseCallback(const geometry_msgs::msg::PoseStamped::UniquePtr msg) {
+  if (!is_initialized_) {
+    return;
+  }
+
+  getting_desired_pose_ = true;
+  RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Getting desired pose", this->get_name());
+  desired_pose_[0] = msg->pose.position.x;
+  desired_pose_[1] = msg->pose.position.y;
+  desired_pose_[2] = msg->pose.position.z;
+  desired_pose_[3] = getYaw(msg->pose.orientation);
 }
 //}
 
@@ -442,7 +465,7 @@ bool Navigation::gotoTriggerCallback([[maybe_unused]] const std::shared_ptr<std_
     return true;
   }
 
-  if (current_waypoint_id_ >= int(waypoint_in_buffer_.size()) || waypoint_in_buffer_.empty()) {
+  if (current_waypoint_id_ >= waypoint_in_buffer_.size() || waypoint_in_buffer_.empty()) {
     response->message = "Goto rejected, no waypoint provided";
     response->success = false;
     RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
@@ -726,8 +749,17 @@ bool Navigation::hoverCallback([[maybe_unused]] const std::shared_ptr<std_srvs::
 
 /* navigationRoutine //{ */
 void Navigation::navigationRoutine(void) {
-  if (is_initialized_ && getting_octomap_ && getting_control_diagnostics_ && getting_odometry_) {
-  
+  if (is_initialized_ && getting_octomap_ && getting_control_diagnostics_ && getting_odometry_ && getting_desired_pose_) {
+
+    if (bumper_enabled_) {
+      std::scoped_lock lock(bumper_mutex_);
+      if (bumper_msg_ == nullptr || nanosecondsToSecs((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0) {
+        RCLCPP_WARN(this->get_logger(), "[%s]: Missing bumper data calling hover.", this->get_name());
+        hover();
+        status_ = IDLE;
+      }
+    }
+
     switch (status_) {
 
       /* IDLE //{ */
@@ -746,23 +778,6 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
-        if (bumper_enabled_){
-          std::scoped_lock lock(bumper_mutex_);
-          if (bumper_msg_ == nullptr || nanosecondsToSecs((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0 ){
-            RCLCPP_WARN(this->get_logger(), "[%s]: Missing bumper data calling hover.", this->get_name());
-            hover();
-            status_ = IDLE;
-            break;
-          }
-
-          bool close_obstacle_detected = bumperCheckObstacles(*bumper_msg_);
-          if (close_obstacle_detected && !bumper_active_){
-            RCLCPP_WARN(this->get_logger(), "[%s]: Activating bumper.", this->get_name());
-            bumper_active_ = true;
-          }
-
-        }
-
         std::scoped_lock lock(octree_mutex_);
 
         if (octree_ == NULL || octree_->size() < 1) {
@@ -771,8 +786,8 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
-        if (waypoint_in_buffer_.empty()) {
-          RCLCPP_WARN(this->get_logger(), "[%s]: No navigation goals provided. Switching to IDLE", this->get_name());
+        if (waypoint_in_buffer_.empty() || current_waypoint_id_ >= waypoint_in_buffer_.size()) {
+          RCLCPP_WARN(this->get_logger(), "[%s]: No navigation goals available. Switching to IDLE", this->get_name());
           status_ = IDLE;
           break;
         }
@@ -783,7 +798,7 @@ void Navigation::navigationRoutine(void) {
         RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint [%.2f, %.2f, %.2f, %.2f] set as a next goal", this->get_name(), current_goal_[0], current_goal_[1],
                     current_goal_[2], current_goal_[3]);
 
-        visualizeGoals(current_waypoint_id_, waypoint_in_buffer_, current_goal_);
+        visualizeGoals(waypoint_in_buffer_);
 
         if (replanning_counter_ >= replanning_limit_) {
           RCLCPP_ERROR(this->get_logger(),
@@ -798,10 +813,11 @@ void Navigation::navigationRoutine(void) {
                                      min_altitude_, max_altitude_, planning_timeout_, max_waypoint_distance_, unknown_is_occupied_);
 
         octomap::point3d planning_start = toPoint3d(uav_pos_);
+        octomap::point3d pos_cmd        = toPoint3d(desired_pose_);
         octomap::point3d planning_goal  = toPoint3d(current_goal_);
 
         std::pair<std::vector<octomap::point3d>, PlanningResult> waypoints =
-            planner.findPath(planning_start, planning_goal, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
+            planner.findPath(planning_start, planning_goal, pos_cmd, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
                              std::bind(&Navigation::visualizeExpansions, this, _1, _2, _3));
 
         RCLCPP_INFO(this->get_logger(), "[%s]: Planner returned %ld waypoints", this->get_name(), waypoints.first.size());
@@ -810,13 +826,13 @@ void Navigation::navigationRoutine(void) {
         if (waypoints.second == GOAL_REACHED) {
           RCLCPP_INFO(this->get_logger(), "[%s]: Current goal reached", this->get_name());
 
-          if (current_waypoint_id_ + 1 >= int(waypoint_in_buffer_.size())) {
+          if (current_waypoint_id_ + 1 >= waypoint_in_buffer_.size()) {
             RCLCPP_INFO(this->get_logger(), "[%s]: The last provided navigation goal has been visited. Switching to IDLE", this->get_name());
             status_ = IDLE;
             break;
 
-          }else{
-            current_waypoint_id_ ++;
+          } else {
+            current_waypoint_id_++;
           }
 
           break;
@@ -869,11 +885,11 @@ void Navigation::navigationRoutine(void) {
         //}
 
         /* resample path and add yaw //{ */
-        std::vector<Eigen::Vector4d> resampled = resamplePath(waypoints.first, uav_pos_.w(), current_goal_.w());
+        std::vector<Eigen::Vector4d> resampled = resamplePath(waypoints.first, desired_pose_.w(), current_goal_.w());
 
         bool output_current_goal = waypoints.second == COMPLETE;
         for (auto &w : resampled) {
-          if ((w.head<3>() - uav_pos_.head<3>()).norm() <= replanning_distance_) {
+          if ((w.head<3>() - desired_pose_.head<3>()).norm() <= replanning_distance_) {
             waypoint_out_buffer_.push_back(w);
           } else {
             RCLCPP_INFO(this->get_logger(), "[%s]: Path exceeding replanning distance", this->get_name());
@@ -901,30 +917,11 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
-        if (bumper_enabled_){
-          std::scoped_lock lock(bumper_mutex_);
-          if (bumper_msg_ == nullptr || nanosecondsToSecs((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0 ){
-            RCLCPP_WARN(this->get_logger(), "[%s]: Missing bumper data calling hover.", this->get_name());
-            hover();
-            status_ = IDLE;
-            break;
-          }
-
-          bool close_obstacle_detected = bumperCheckObstacles(*bumper_msg_);
-          if (close_obstacle_detected && !bumper_active_){
-            RCLCPP_WARN(this->get_logger(), "[%s]: [Bumper] - obstacle in proximity! calling hover and replanning", this->get_name());
-            hover();
-            replanning_counter_ = 0;
-            status_ = PLANNING;
-            break;
-          }
-
-        }
-
         if (waypoint_out_buffer_.size() < 1) {
-          RCLCPP_WARN(this->get_logger(), "[%s]: Planning did not produce any waypoints. Retrying...", this->get_name());
+          RCLCPP_WARN(this->get_logger(), "[%s]: No waypoints in the output buffer. Replanning", this->get_name());
           replanning_counter_++;
           status_ = PLANNING;
+          break;
         }
 
         RCLCPP_INFO(this->get_logger(), "[%s]: Sending %ld waypoints to the control interface:", this->get_name(), waypoint_out_buffer_.size());
@@ -948,39 +945,101 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
-        if (bumper_enabled_){
-          std::scoped_lock lock(bumper_mutex_);
-          if (bumper_msg_ == nullptr || nanosecondsToSecs((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0 ){
-            RCLCPP_WARN(this->get_logger(), "[%s]: Missing bumper data calling hover.", this->get_name());
-            hover();
-            status_ = IDLE;
-            break;
-          }
+        //{
+        /* if (bumper_enabled_) { */
+        /*   std::scoped_lock lock(bumper_mutex_); */
+        /*   if (bumper_msg_ == nullptr || nanosecondsToSecs((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0) { */
+        /*     RCLCPP_WARN(this->get_logger(), "[%s]: Missing bumper data calling hover.", this->get_name()); */
+        /*     hover(); */
+        /*     status_ = IDLE; */
+        /*     break; */
+        /*   } */
 
-          bool close_obstacle_detected = bumperCheckObstacles(*bumper_msg_);
-          if (!bumper_active_){
-            if (close_obstacle_detected){
-              RCLCPP_WARN(this->get_logger(), "[%s]: [Bumper] - obstacle in proximity! Calling hover and replanning", this->get_name());
-              hover();
-              replanning_counter_ = 0;
-              status_ = PLANNING;
-              break;
-            }
-          }else if (!close_obstacle_detected){
-              RCLCPP_WARN(this->get_logger(), "[%s]: Deactivating bumper.", this->get_name());
-              bumper_active_ = false;
-          }
-
-        }
+        /*   bool close_obstacle_detected = bumperCheckObstacles(*bumper_msg_); */
+        /*   if (!bumper_active_) { */
+        /*     if (close_obstacle_detected) { */
+        /*       bumper_active_ = true; */
+        /*       RCLCPP_WARN(this->get_logger(), "[%s]: [Bumper] - obstacle in proximity! Calling hover and starting avoidance", this->get_name()); */
+        /*       hover(); */
+        /*       replanning_counter_ = 0; */
+        /*       status_             = AVOIDING; */
+        /*       break; */
+        /*     } */
+        /*   } else if (!close_obstacle_detected) { */
+        /*     RCLCPP_WARN(this->get_logger(), "[%s]: Deactivating bumper.", this->get_name()); */
+        /*     bumper_active_ = false; */
+        /*   } */
+        /* } */
+        //}
 
         replanning_counter_ = 0;
-        if ((!control_moving_ && goal_reached_) || (uav_pos_.head<3>() - current_goal_.head<3>()).norm() <= navigation_tolerance_) {
+        if ((!control_moving_ && goal_reached_)) {
           RCLCPP_INFO(this->get_logger(), "[%s]: End of current segment reached", this->get_name());
           status_ = PLANNING;
         }
         break;
       }
-      //}
+        //}
+
+        /* AVOIDING //{ */
+      case AVOIDING: {
+
+        // Bumper-based
+        RCLCPP_INFO(this->get_logger(), "[%s]: AVOIDING", this->get_name());
+
+        double angle_per_sector = (2 * M_PI) / (bumper_msg_->sectors.size() - 2);
+
+        Eigen::Vector2d best_direction;
+        double          max_dist = 0;
+
+        for (size_t n = 0; n < bumper_msg_->sectors.size() - 2; n++) {
+          Eigen::Vector2d direction(std::cos(angle_per_sector * n), std::sin(angle_per_sector * n));
+          if (bumper_msg_->sectors[n] > max_dist) {
+            max_dist       = bumper_msg_->sectors[n];
+            best_direction = direction;
+          }
+        }
+
+        RCLCPP_INFO(this->get_logger(), "[Navigation]: Moving in the direction: [%.2f, %.2f] because there is %.2f m of free space", best_direction.x(),
+                    best_direction.y(), max_dist);
+        waypoint_out_buffer_.clear();
+        waypoint_out_buffer_.push_back(desired_pose_);
+        Eigen::Vector4d avoidance_goal(desired_pose_.x() + best_direction.x(), desired_pose_.y() + best_direction.y(), desired_pose_.z(), desired_pose_.w());
+        waypoint_out_buffer_.push_back(avoidance_goal);
+
+
+        // Planner-based
+        /* RCLCPP_INFO(this->get_logger(), "[%s]: AVOIDING", this->get_name()); */
+        /* navigation::AstarPlanner planner = */
+        /*     navigation::AstarPlanner(safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_, */
+        /*                              min_altitude_, max_altitude_, planning_timeout_, max_waypoint_distance_, unknown_is_occupied_); */
+        /* std::vector<octomap::point3d> tunnel = planner.getTunnel(toPoint3d(uav_pos_), octree_, planning_timeout_); */
+        /* if (tunnel.empty()) { */
+        /*   RCLCPP_WARN(this->get_logger(), "[%s]: Could not create a tunnel to safety. Calling hover", this->get_name()); */
+        /*   hover(); */
+        /*   status_ = IDLE; */
+        /*   break; */
+        /* } */
+        /* RCLCPP_INFO(this->get_logger(), "[%s]: Tunnel of size %ld created. Moving away from obstacle", this->get_name(), tunnel.size()); */
+        /* waypoint_out_buffer_.clear(); */
+
+        /* /1*         auto postprocessed_tunnel = resamplePath(tunnel, uav_pos_[3], uav_pos_[3]); *1/ */
+
+        /* /1*         for (auto &p : postprocessed_tunnel) { *1/ */
+        /* /1*           p.z() = uav_pos_[2]; *1/ */
+        /* /1*         } *1/ */
+
+        /* /1* waypoint_out_buffer_.insert(waypoint_out_buffer_.end(), postprocessed_tunnel.begin(), postprocessed_tunnel.end()); *1/ */
+
+        /* for (const auto &w : tunnel) { */
+        /*   Eigen::Vector4d v(w.x(), w.y(), w.z(), uav_pos_[3]); */
+        /*   waypoint_out_buffer_.push_back(v); */
+        /* } */
+
+        status_ = COMMANDING;
+        break;
+      }
+        //}
     }
   }
 
@@ -992,7 +1051,7 @@ void Navigation::navigationRoutine(void) {
 //}
 
 /* bumperCheckObstacles //{ */
-bool Navigation::bumperCheckObstacles(const fog_msgs::msg::ObstacleSectors &bumper_msg){
+bool Navigation::bumperCheckObstacles(const fog_msgs::msg::ObstacleSectors &bumper_msg) {
   /* double sector_size = 2 * M_PI / double(bumper_data->n_horizontal_sectors); */
 
   for (int i = 0; i < int(bumper_msg.n_horizontal_sectors); i++) {
@@ -1007,11 +1066,12 @@ bool Navigation::bumperCheckObstacles(const fog_msgs::msg::ObstacleSectors &bump
     }
   }
 
-  return false; 
+  return false;
 }
 //}
 
 /* resamplePath //{ */
+
 std::vector<Eigen::Vector4d> Navigation::resamplePath(const std::vector<octomap::point3d> &waypoints, const double start_yaw, const double end_yaw) {
   std::vector<Eigen::Vector4d> ret;
 
@@ -1052,12 +1112,37 @@ std::vector<Eigen::Vector4d> Navigation::resamplePath(const std::vector<octomap:
 
   double delta_yaw = std::atan2(std::sin(end_yaw - start_yaw), std::cos(end_yaw - start_yaw));
   double yaw_step  = delta_yaw / ret.size();
-
   std::cout << "[Navigation]: Start yaw: " << start_yaw << ", end yaw: " << end_yaw << ", yaw step: " << yaw_step << "\n";
-  ret.front().w() = start_yaw;
-  for (size_t j = 1; j < ret.size(); j++) {
-    ret[j].w() = ret[j - 1].w() + yaw_step;
+
+  if (std::abs(yaw_step) <= max_yaw_step_) {
+    ret.front().w() = start_yaw;
+    for (size_t j = 1; j < ret.size(); j++) {
+      ret[j].w() = ret[j - 1].w() + yaw_step;
+    }
+  } else {
+    // resample again to limit yaw rate and avoid fast turning
+    int resampling_factor = int(std::abs(yaw_step) / max_yaw_step_) + 1;
+    std::cout << "[Navigation]: Yaw step: " << yaw_step << " is greater than max yaw step: " << max_yaw_step_ << "\n";
+    std::cout << "[Navigation]: Resampling factor: " << resampling_factor << "\n";
+    std::vector<Eigen::Vector4d> resampled;
+    for (const auto &p : ret) {
+      for (int j = 0; j < resampling_factor; j++) {
+        Eigen::Vector4d v(p[0], p[1], p[2], p[3]);
+        resampled.push_back(v);
+      }
+    }
+
+    ret.clear();
+    ret.insert(ret.end(), resampled.begin(), resampled.end());
+    yaw_step = delta_yaw / ret.size();
+    std::cout << "[Navigation]: New yaw step: " << yaw_step << "\n";
+    ret.front().w() = start_yaw;
+    for (size_t j = 1; j < ret.size(); j++) {
+      ret[j].w() = ret[j - 1].w() + yaw_step;
+    }
   }
+
+
   //}
 
   return ret;
@@ -1091,7 +1176,7 @@ std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPathSrv(con
 /* hover //{ */
 void Navigation::hover() {
   waypoint_out_buffer_.clear();
-  waypoint_out_buffer_.push_back(uav_pos_);
+  waypoint_out_buffer_.push_back(desired_pose_);
   auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, true);
   auto call_result   = local_path_client_->async_send_request(waypoints_srv);
   waypoint_out_buffer_.clear();
@@ -1142,9 +1227,9 @@ bool Navigation::waypointFutureCallback(rclcpp::Client<fog_msgs::srv::WaypointTo
       return false;
     }
 
-    if ((point.head<3>() - uav_pos_.head<3>()).norm() > max_goal_distance_) {
+    if ((point.head<3>() - desired_pose_.head<3>()).norm() > max_goal_distance_) {
       RCLCPP_WARN(this->get_logger(), "[%s]: Distance to goal (%.2f) exceeds the maximum allowed distance (%.2f m)", this->get_name(),
-                  (point.head<3>() - uav_pos_.head<3>()).norm(), max_goal_distance_);
+                  (point.head<3>() - desired_pose_.head<3>()).norm(), max_goal_distance_);
       return false;
     }
 
@@ -1188,9 +1273,9 @@ bool Navigation::pathFutureCallback(rclcpp::Client<fog_msgs::srv::PathToLocal>::
         return false;
       }
 
-      if ((point.head<3>() - uav_pos_.head<3>()).norm() > max_goal_distance_) {
+      if ((point.head<3>() - desired_pose_.head<3>()).norm() > max_goal_distance_) {
         RCLCPP_WARN(this->get_logger(), "[%s]: Distance to goal (%.2f) exceeds the maximum allowed distance (%.2f m)", this->get_name(),
-                    (point.head<3>() - uav_pos_.head<3>()).norm(), max_goal_distance_);
+                    (point.head<3>() - desired_pose_.head<3>()).norm(), max_goal_distance_);
         return false;
       }
 
@@ -1332,7 +1417,7 @@ void Navigation::visualizePath(const std::vector<Eigen::Vector4d> &waypoints) {
 //}
 
 /* visualizeGoals //{ */
-void Navigation::visualizeGoals(const int current_waypoint_id, const std::vector<Eigen::Vector4d> &waypoints, const Eigen::Vector4d current_goal) {
+void Navigation::visualizeGoals(const std::deque<Eigen::Vector4d> &waypoints) {
   RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Visualizing goals", this->get_name());
   visualization_msgs::msg::Marker msg;
   msg.header.frame_id    = parent_frame_;
@@ -1345,26 +1430,23 @@ void Navigation::visualizeGoals(const int current_waypoint_id, const std::vector
   msg.scale.x            = goal_points_scale_;
   msg.scale.y            = goal_points_scale_;
 
-  for (size_t id = current_waypoint_id; id < waypoints.size(); id++) {
-    const Eigen::Vector4d w = waypoints[id];
+  for (size_t id = 0; id < waypoints.size(); id++) {
+    const Eigen::Vector4d    w = waypoints[id];
+    std_msgs::msg::ColorRGBA c;
+
+    if (id == current_waypoint_id_) {
+      c = generateColor(0.3, 0.5, 1.0, 1.0);
+    } else {
+      c = generateColor(0.1, 0.3, 0.7, 1.0);
+    }
+
     geometry_msgs::msg::Point p;
-    std_msgs::msg::ColorRGBA  c = generateColor(0.1, 0.3, 0.7, 1.0);
-    p.x                         = w.x();
-    p.y                         = w.y();
-    p.z                         = w.z();
+    p.x = w.x();
+    p.y = w.y();
+    p.z = w.z();
     msg.points.push_back(p), w.w();
     msg.colors.push_back(c);
   }
-
-  // current goal
-  geometry_msgs::msg::Point p;
-  std_msgs::msg::ColorRGBA  c = generateColor(0.3, 0.5, 1.0, 1.0);
-  p.x                         = current_goal.x();
-  p.y                         = current_goal.y();
-  p.z                         = current_goal.z();
-  msg.points.push_back(p);
-  msg.colors.push_back(c);
-
   goal_publisher_->publish(msg);
 }
 //}
@@ -1395,12 +1477,12 @@ bool Navigation::parse_param(const std::string &param_name, T &param_dest) {
   return true;
 }
 
-template bool Navigation::parse_param<int>(const std::string &param_name, int &param_dest);
-template bool Navigation::parse_param<double>(const std::string &param_name, double &param_dest);
-template bool Navigation::parse_param<float>(const std::string &param_name, float &param_dest);
-template bool Navigation::parse_param<std::string>(const std::string &param_name, std::string &param_dest);
-template bool Navigation::parse_param<bool>(const std::string &param_name, bool &param_dest);
-template bool Navigation::parse_param<unsigned int>(const std::string &param_name, unsigned int &param_dest);
+/* template bool Navigation::parse_param<int>(const std::string &param_name, int &param_dest); */
+/* template bool Navigation::parse_param<double>(const std::string &param_name, double &param_dest); */
+/* template bool Navigation::parse_param<float>(const std::string &param_name, float &param_dest); */
+/* template bool Navigation::parse_param<std::string>(const std::string &param_name, std::string &param_dest); */
+/* template bool Navigation::parse_param<bool>(const std::string &param_name, bool &param_dest); */
+/* template bool Navigation::parse_param<unsigned int>(const std::string &param_name, unsigned int &param_dest); */
 //}
 
 }  // namespace navigation

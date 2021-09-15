@@ -51,8 +51,8 @@ bool LeafComparator::operator()(const std::pair<octomap::OcTree::iterator, doubl
 
 /* AstarPlanner constructor //{ */
 AstarPlanner::AstarPlanner(double safe_obstacle_distance, double euclidean_distance_cutoff, double planning_tree_resolution, double distance_penalty,
-                           double greedy_penalty, double min_altitude, double max_altitude, double timeout_threshold,
-                           double max_waypoint_distance, bool unknown_is_occupied) {
+                           double greedy_penalty, double min_altitude, double max_altitude, double timeout_threshold, double max_waypoint_distance,
+                           bool unknown_is_occupied) {
 
   this->safe_obstacle_distance    = safe_obstacle_distance;
   this->euclidean_distance_cutoff = euclidean_distance_cutoff;
@@ -70,8 +70,8 @@ AstarPlanner::AstarPlanner(double safe_obstacle_distance, double euclidean_dista
 /* findPath //{ */
 
 std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
-    const octomap::point3d &start_coord, const octomap::point3d &goal_coord, std::shared_ptr<octomap::OcTree> mapping_tree, double timeout,
-    std::function<void(const octomap::OcTree &)> visualizeTree,
+    const octomap::point3d &start_coord, const octomap::point3d &goal_coord, const octomap::point3d &pos_cmd, std::shared_ptr<octomap::OcTree> mapping_tree,
+    double timeout, std::function<void(const octomap::OcTree &)> visualizeTree,
     std::function<void(const std::unordered_set<Node, HashFunction> &, const std::unordered_set<Node, HashFunction> &, const octomap::OcTree &)>
         visualizeExpansions) {
 
@@ -103,7 +103,7 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
 
   if (map_query == NULL) {
     printf("[Astar]: Goal is outside of map\n");
-    auto temp_goal = generateTemporaryGoal(start_coord, goal_coord, tree);
+    auto temp_goal = generateTemporaryGoal(start_coord, goal_coord, pos_cmd, tree);
     printf("[Astar]: Generated a temporary goal: [%.2f, %.2f, %.2f]\n", temp_goal.first.x(), temp_goal.first.y(), temp_goal.first.z());
     if (temp_goal.second) {
       std::vector<octomap::point3d> vertical_path;
@@ -253,7 +253,7 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
     return {prepareOutputPath(path_keys, tree), INCOMPLETE};
   }
 
-  if(!tunnel.empty()){
+  if (!tunnel.empty()) {
     std::vector<octomap::point3d> path_to_safety;
     path_to_safety.push_back(start_coord);
     path_to_safety.push_back(tunnel.back());
@@ -264,6 +264,23 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
   printf("[Astar]: PATH DOES NOT EXIST!\n");
 
   return {std::vector<octomap::point3d>(), FAILURE};
+}
+//}
+
+/* getTunnel //{ */
+std::vector<octomap::point3d> AstarPlanner::getTunnel(const octomap::point3d &uav_coord, std::shared_ptr<octomap::OcTree> mapping_tree, double timeout) {
+  std::vector<octomap::point3d> tunnel;
+
+  printf("[Astar]: tunnelling start [%.2f, %.2f, %.2f]\n", uav_coord.x(), uav_coord.y(), uav_coord.z());
+
+  this->timeout_threshold       = timeout;
+  auto time_start_planning_tree = std::chrono::high_resolution_clock::now();
+  auto tree_with_tunnel         = createPlanningTree(mapping_tree, uav_coord, planning_tree_resolution);
+  printf("[Astar]: planning tree took %.2f s to create\n",
+         std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - time_start_planning_tree).count());
+
+  printf("[Astar]: tunnel of size %ld\n", tree_with_tunnel->second.size());
+  return tree_with_tunnel->second;
 }
 //}
 
@@ -526,22 +543,21 @@ std::vector<octomap::point3d> AstarPlanner::prepareOutputPath(const std::vector<
 
 /* generateTemporaryGoal() //{ */
 
-std::pair<octomap::point3d, bool> AstarPlanner::generateTemporaryGoal(const octomap::point3d &start, const octomap::point3d &goal, octomap::OcTree &tree) {
+std::pair<octomap::point3d, bool> AstarPlanner::generateTemporaryGoal(const octomap::point3d &start, const octomap::point3d &goal,
+                                                                      const octomap::point3d &pos_cmd, octomap::OcTree &tree) {
 
   bool             vertical_priority = false;
   octomap::point3d temp_goal;
 
   // check if it is necessary to change altitude and acquire more of map
-  if (std::abs(goal.z() - start.z()) > planning_tree_resolution / 2.0) {
+  if (std::abs(goal.z() - start.z()) > planning_tree_resolution) {
     vertical_priority = true;
     printf("[Astar]: give priority to vertical motion\n");
     temp_goal.x() = start.x();
     temp_goal.y() = start.y();
 
-    double extra_motion = goal.z() - start.z();
-    extra_motion        = (extra_motion / std::abs(extra_motion)) * planning_tree_resolution;
-
-    temp_goal.z() = goal.z() + extra_motion;
+    double alt_diff = pos_cmd.z() - start.z();  // odometry and desired altitude may differ
+    temp_goal.z()   = goal.z() + alt_diff;      // scan new layers of octomap in that case
 
     if (temp_goal.z() > max_altitude) {
       printf("[Astar]: capping at max altitude\n");
