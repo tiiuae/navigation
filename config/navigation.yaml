@@ -10,6 +10,7 @@ planning:
   greedy_penalty: 1.0
   planning_tree_resolution: 0.4
   max_waypoint_distance: 0.4 # [m] // or set negative to allow maximal segment length
+  max_yaw_step: 0.1 # [rad]
   planning_timeout: 4.5 # [s]
   replanning_limit: 3 # number of repeated attempts
   replanning_distance: 15.0 # [m] Euclidean distance from first waypoint
