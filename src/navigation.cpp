@@ -124,6 +124,7 @@ private:
   // params
   double euclidean_distance_cutoff_;
   double safe_obstacle_distance_;
+  double bumper_distance_factor_;
   double navigation_tolerance_;
   bool   unknown_is_occupied_;
   double min_altitude_;
@@ -237,6 +238,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   bool loaded_successfully = true;
   loaded_successfully &= parse_param("planning.euclidean_distance_cutoff", euclidean_distance_cutoff_);
   loaded_successfully &= parse_param("planning.safe_obstacle_distance", safe_obstacle_distance_);
+  loaded_successfully &= parse_param("planning.bumper_distance_factor", bumper_distance_factor_);
   loaded_successfully &= parse_param("planning.unknown_is_occupied", unknown_is_occupied_);
   loaded_successfully &= parse_param("planning.navigation_tolerance", navigation_tolerance_);
   loaded_successfully &= parse_param("planning.min_altitude", min_altitude_);
@@ -785,7 +787,7 @@ void Navigation::navigationRoutine(void) {
           } else if (!obstacle_detected) {
             RCLCPP_WARN(this->get_logger(), "[%s]: Deactivating bumper", this->get_name());
             bumper_active_ = false;
-            status_ = PLANNING;
+            status_        = PLANNING;
             break;
           }
         }
@@ -1014,11 +1016,11 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
-        Eigen::Vector4d new_goal = desired_pose_;
+        Eigen::Vector4d new_goal = uav_pos_;
         new_goal.x() += avoidance_vector.x();
         new_goal.y() += avoidance_vector.y();
-        new_goal.z() += avoidance_vector.z();
-        new_goal.w() = uav_pos_.w();
+        new_goal.z() = desired_pose_.z() + avoidance_vector.z();  // TODO this is a temporary workaround until state estimation (odometry pkg) is integrated
+        new_goal.w() = desired_pose_.w();
 
         RCLCPP_INFO(this->get_logger(), "[Bumper]: Avoiding obstacle by moving from [%.2f, %.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f, %.2f]", uav_pos_.x(),
                     uav_pos_.y(), uav_pos_.z(), uav_pos_.w(), new_goal.x(), new_goal.y(), new_goal.z(), new_goal.w());
@@ -1057,7 +1059,7 @@ bool Navigation::bumperCheckObstacles(const fog_msgs::msg::ObstacleSectors &bump
     }
 
     // if the sector is under safe distance
-    if (bumper_msg.sectors[i] <= safe_obstacle_distance_) {
+    if (bumper_msg.sectors[i] <= safe_obstacle_distance_ * bumper_distance_factor_) {
       return true;
     }
   }
@@ -1079,7 +1081,7 @@ Eigen::Vector3d Navigation::bumperGetAvoidanceVector(const fog_msgs::msg::Obstac
       continue;
     }
 
-    if (bumper_msg.sectors[i] <= safe_obstacle_distance_) {
+    if (bumper_msg.sectors[i] <= safe_obstacle_distance_ * bumper_distance_factor_) {
       Eigen::Quaterniond q = Eigen::AngleAxisd(0, Eigen::Vector3d::UnitX()) * Eigen::AngleAxisd(0, Eigen::Vector3d::UnitY()) *
                              Eigen::AngleAxisd(sector_size * i + M_PI + uav_pos_.w(), Eigen::Vector3d::UnitZ());
 
