@@ -40,7 +40,7 @@ def generate_launch_description():
                 ],
                 remappings=[
                     ("~/octomap_in", "/" + DRONE_DEVICE_ID + "/octomap_server/octomap_full"),
-                    ("~/odometry_in", "/" + DRONE_DEVICE_ID + "/control_interface/local_odom"),
+                    ("~/odometry_in", "/" + DRONE_DEVICE_ID + "/odometry2/local_odom"),
                     ("~/desired_pose_in", "/" + DRONE_DEVICE_ID + "/control_interface/desired_pose"),
                     ("~/hover_in", "~/hover"),
                     ("~/goto_in", "~/goto_waypoints"),

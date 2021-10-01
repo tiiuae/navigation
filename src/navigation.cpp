@@ -472,6 +472,13 @@ bool Navigation::gotoTriggerCallback([[maybe_unused]] const std::shared_ptr<std_
     return true;
   }
 
+  if (!getting_desired_pose_) {
+    response->message = "Goto rejected, missing control_interface's desired_pose";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
   if (current_waypoint_id_ >= waypoint_in_buffer_.size() || waypoint_in_buffer_.empty()) {
     response->message = "Goto rejected, no waypoint provided";
     response->success = false;
@@ -801,6 +808,8 @@ void Navigation::navigationRoutine(void) {
 
       /* PLANNING //{ */
       case PLANNING: {
+
+                       RCLCPP_INFO(this->get_logger(), "[Navigation]: AAAAAAAAAAAAAAAAAAAAAAAAA");
 
         waypoint_out_buffer_.clear();
 
