@@ -1439,16 +1439,22 @@ void Navigation::visualizePath(const std::vector<Eigen::Vector4d> &waypoints) {
   msg.pose.orientation.w = 1.0;
   msg.scale.x            = path_points_scale_;
 
-  for (size_t i = 1; i < waypoints.size(); i++) {
+  std::vector<Eigen::Vector4d> tmp_waypoints;
+  tmp_waypoints.push_back(uav_pos_);
+  for (auto &w : waypoints) {
+    tmp_waypoints.push_back(w);
+  }
+
+  for (size_t i = 1; i < tmp_waypoints.size(); i++) {
     geometry_msgs::msg::Point p1, p2;
     std_msgs::msg::ColorRGBA  c;
-    p1.x = waypoints[i - 1].x();
-    p1.y = waypoints[i - 1].y();
-    p1.z = waypoints[i - 1].z();
-    p2.x = waypoints[i].x();
-    p2.y = waypoints[i].y();
-    p2.z = waypoints[i].z();
-    c    = generateColor(0.1, double(i) / double(waypoints.size()), 0.1, 1);
+    p1.x = tmp_waypoints[i - 1].x();
+    p1.y = tmp_waypoints[i - 1].y();
+    p1.z = tmp_waypoints[i - 1].z();
+    p2.x = tmp_waypoints[i].x();
+    p2.y = tmp_waypoints[i].y();
+    p2.z = tmp_waypoints[i].z();
+    c    = generateColor(0.1, double(i) / double(tmp_waypoints.size()), 0.1, 1);
     msg.points.push_back(p1);
     msg.points.push_back(p2);
     msg.colors.push_back(c);
