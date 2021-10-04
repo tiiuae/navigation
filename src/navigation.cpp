@@ -214,7 +214,7 @@ private:
 
   std::vector<Eigen::Vector4d> resamplePath(const std::vector<octomap::point3d> &waypoints, const double start_yaw, const double end_yaw);
 
-  std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPathSrv(const std::vector<Eigen::Vector4d> &waypoints, bool use_first = true);
+  std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPathSrv(const std::vector<Eigen::Vector4d> &waypoints);
   void                                          hover();
 
   void publishDiagnostics();
@@ -809,8 +809,6 @@ void Navigation::navigationRoutine(void) {
       /* PLANNING //{ */
       case PLANNING: {
 
-                       RCLCPP_INFO(this->get_logger(), "[Navigation]: AAAAAAAAAAAAAAAAAAAAAAAAA");
-
         waypoint_out_buffer_.clear();
 
         if (hover_requested_) {
@@ -971,7 +969,7 @@ void Navigation::navigationRoutine(void) {
         }
         visualizePath(waypoint_out_buffer_);
         publishFutureTrajectory(waypoint_out_buffer_);
-        auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, false);
+        auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_);
         auto call_result   = local_path_client_->async_send_request(waypoints_srv);
         status_            = MOVING;
         break;
@@ -1035,7 +1033,6 @@ void Navigation::navigationRoutine(void) {
                     uav_pos_.y(), uav_pos_.z(), uav_pos_.w(), new_goal.x(), new_goal.y(), new_goal.z(), new_goal.w());
 
         waypoint_out_buffer_.clear();
-        waypoint_out_buffer_.push_back(desired_pose_);
         waypoint_out_buffer_.push_back(new_goal);
 
         if (!bumper_active_) {
@@ -1183,22 +1180,17 @@ std::vector<Eigen::Vector4d> Navigation::resamplePath(const std::vector<octomap:
 //}
 
 /* waypointsToPathSrv //{ */
-std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPathSrv(const std::vector<Eigen::Vector4d> &waypoints, bool use_first) {
+std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPathSrv(const std::vector<Eigen::Vector4d> &waypoints) {
   nav_msgs::msg::Path msg;
   msg.header.stamp    = this->get_clock()->now();
   msg.header.frame_id = parent_frame_;
-  size_t i            = 0;
-  if (!use_first) {
-    ++i;
-  }
-  while (i < waypoints.size()) {
+  for (size_t i = 0; i < waypoints.size(); i++) {
     geometry_msgs::msg::PoseStamped p;
     p.pose.position.x  = waypoints[i].x();
     p.pose.position.y  = waypoints[i].y();
     p.pose.position.z  = waypoints[i].z();
     p.pose.orientation = yawToQuaternionMsg(waypoints[i].w());
     msg.poses.push_back(p);
-    i++;
   }
   auto path_srv  = std::make_shared<fog_msgs::srv::Path::Request>();
   path_srv->path = msg;
@@ -1210,7 +1202,7 @@ std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPathSrv(con
 void Navigation::hover() {
   std::vector<Eigen::Vector4d> waypoints;
   waypoints.push_back(desired_pose_);
-  auto waypoints_srv = waypointsToPathSrv(waypoints, true);
+  auto waypoints_srv = waypointsToPathSrv(waypoints);
   auto call_result   = local_path_client_->async_send_request(waypoints_srv);
 }
 //}
