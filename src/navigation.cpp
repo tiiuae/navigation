@@ -846,6 +846,8 @@ void Navigation::navigationRoutine(void) {
 
         if (manual_control_) {
           RCLCPP_INFO(this->get_logger(), "[%s]: Manual control enabled, switching to IDLE", this->get_name());
+          waypoint_in_buffer_.clear();
+          waypoint_out_buffer_.clear();
           status_ = IDLE;
           break;
         }
@@ -993,6 +995,8 @@ void Navigation::navigationRoutine(void) {
 
         if (manual_control_) {
           RCLCPP_INFO(this->get_logger(), "[%s]: Manual control enabled, switching to IDLE", this->get_name());
+          waypoint_in_buffer_.clear();
+          waypoint_out_buffer_.clear();
           status_ = IDLE;
           break;
         }
@@ -1028,6 +1032,8 @@ void Navigation::navigationRoutine(void) {
 
         if (manual_control_) {
           RCLCPP_INFO(this->get_logger(), "[%s]: Manual control enabled, switching to IDLE", this->get_name());
+          waypoint_in_buffer_.clear();
+          waypoint_out_buffer_.clear();
           status_ = IDLE;
           break;
         }
@@ -1070,6 +1076,8 @@ void Navigation::navigationRoutine(void) {
 
         if (manual_control_) {
           RCLCPP_INFO(this->get_logger(), "[%s]: Manual control enabled, switching to IDLE", this->get_name());
+          waypoint_in_buffer_.clear();
+          waypoint_out_buffer_.clear();
           status_ = IDLE;
           break;
         }
