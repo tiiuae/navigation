@@ -906,18 +906,26 @@ void Navigation::navigationRoutine(void) {
 
         /* GOAL_REACHED //{ */
         if (waypoints.second == GOAL_REACHED) {
-          RCLCPP_INFO(this->get_logger(), "[%s]: Current goal reached", this->get_name());
 
-          if (current_waypoint_id_ >= waypoint_in_buffer_.size()) {
-            RCLCPP_INFO(this->get_logger(), "[%s]: The last provided navigation goal has been visited. Switching to IDLE", this->get_name());
-            status_ = IDLE;
-            break;
-
+          if (std::abs(uav_pos_.w() - current_goal_.w()) > max_yaw_step_) {
+            RCLCPP_INFO(this->get_logger(), "[%s]: turning in one spot", this->get_name());
+            waypoints.second    = COMPLETE;
+            replanning_counter_ = 0;
           } else {
-            current_waypoint_id_++;
-          }
+          
+            RCLCPP_INFO(this->get_logger(), "[%s]: Current goal reached", this->get_name());
 
-          break;
+            if (current_waypoint_id_ >= waypoint_in_buffer_.size()) {
+              RCLCPP_INFO(this->get_logger(), "[%s]: The last provided navigation goal has been visited. Switching to IDLE", this->get_name());
+              status_ = IDLE;
+              break;
+
+            } else {
+              current_waypoint_id_++;
+            }
+
+            break;
+          }
         }
         //}
 
@@ -936,16 +944,27 @@ void Navigation::navigationRoutine(void) {
             break;
           }
 
-          Eigen::Vector3d w_start, w_end;
-          w_start.x()                = waypoints.first.front().x();
-          w_start.y()                = waypoints.first.front().y();
-          w_start.z()                = waypoints.first.front().z();
+          Eigen::Vector3d w_start;
+          w_start.x() = waypoints.first.front().x();
+          w_start.y() = waypoints.first.front().y();
+          w_start.z() = waypoints.first.front().z();
+          Eigen::Vector3d w_end;
+          w_end.x() = waypoints.first.back().x();
+          w_end.y() = waypoints.first.back().y();
+          w_end.z() = waypoints.first.back().z();
+
           double path_start_end_dist = (w_end - w_start).norm();
 
           if (path_start_end_dist < 1.1 * planning_tree_resolution_) {
-            RCLCPP_WARN(this->get_logger(), "[%s]: path too short", this->get_name());
-            replanning_counter_++;
-            break;
+            if (std::abs(uav_pos_.w() - current_goal_.w()) > max_yaw_step_) {
+              RCLCPP_INFO(this->get_logger(), "[%s]: turning in one spot", this->get_name());
+              waypoints.second    = COMPLETE;
+              replanning_counter_ = 0;
+            } else {
+              RCLCPP_WARN(this->get_logger(), "[%s]: path too short", this->get_name());
+              replanning_counter_++;
+              break;
+            }
           }
         }
         //}
