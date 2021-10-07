@@ -943,12 +943,17 @@ void Navigation::navigationRoutine(void) {
             navigation::AstarPlanner(safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_,
                                      min_altitude_, max_altitude_, planning_timeout_, max_waypoint_distance_, unknown_is_occupied_);
 
-        octomap::point3d planning_start = toPoint3d(uav_pos_);
-        octomap::point3d pos_cmd        = toPoint3d(desired_pose_);
-        octomap::point3d planning_goal  = toPoint3d(current_goal_);
+        octomap::point3d planning_start;
+        if ((desired_pose_.head<3>() - uav_pos_.head<3>()).norm() <= navigation_tolerance_) {
+          planning_start = toPoint3d(desired_pose_);
+        } else {
+          planning_start = toPoint3d(uav_pos_);
+        }
+
+        octomap::point3d planning_goal = toPoint3d(current_goal_);
 
         std::pair<std::vector<octomap::point3d>, PlanningResult> waypoints =
-            planner.findPath(planning_start, planning_goal, pos_cmd, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
+            planner.findPath(planning_start, planning_goal, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
                              std::bind(&Navigation::visualizeExpansions, this, _1, _2, _3));
 
         RCLCPP_INFO(this->get_logger(), "[%s]: Planner returned %ld waypoints", this->get_name(), waypoints.first.size());
@@ -1004,7 +1009,7 @@ void Navigation::navigationRoutine(void) {
 
           double path_start_end_dist = (w_end - w_start).norm();
 
-          if (path_start_end_dist < 1.1 * planning_tree_resolution_) {
+          if (path_start_end_dist < planning_tree_resolution_) {
             if (std::abs(uav_pos_.w() - current_goal_.w()) > max_yaw_step_) {
               RCLCPP_INFO(this->get_logger(), "[%s]: turning in one spot", this->get_name());
               waypoints.second    = COMPLETE;
