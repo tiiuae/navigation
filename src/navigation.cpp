@@ -95,6 +95,7 @@ private:
   bool override_previous_commands_  = false;
   bool bumper_active_               = false;
   bool manual_control_              = false;
+  bool airborne_                    = false;
 
   std::string parent_frame_;
   int         replanning_counter_ = 0;
@@ -386,6 +387,7 @@ void Navigation::controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfac
   control_moving_ = msg->moving;
   goal_reached_   = msg->mission_finished;
   manual_control_ = msg->manual_control;
+  airborne_       = msg->airborne;
 }
 //}
 
@@ -421,6 +423,11 @@ void Navigation::gotoCallback(const nav_msgs::msg::Path::UniquePtr msg) {
 
   if (!getting_desired_pose_) {
     RCLCPP_ERROR(this->get_logger(), "[%s]: Goto rejected, missing desired pose", this->get_name());
+    return;
+  }
+
+  if (!airborne_) {
+    RCLCPP_ERROR(this->get_logger(), "[%s]: Goto rejected, vehicle not flying normally", this->get_name());
     return;
   }
 
@@ -486,6 +493,13 @@ bool Navigation::gotoTriggerCallback([[maybe_unused]] const std::shared_ptr<std_
     return true;
   }
 
+  if (!airborne_) {
+    response->message = "Goto rejected, vehicle not flying normally";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
   if (current_waypoint_id_ >= waypoint_in_buffer_.size() || waypoint_in_buffer_.empty()) {
     response->message = "Goto rejected, no waypoint provided";
     response->success = false;
@@ -537,6 +551,13 @@ bool Navigation::localPathCallback([[maybe_unused]] const std::shared_ptr<fog_ms
 
   if (!getting_desired_pose_) {
     response->message = "Path rejected, missing desired pose";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (!airborne_) {
+    response->message = "Path rejected, vehicle not flying normally";
     response->success = false;
     RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
     return true;
@@ -611,6 +632,13 @@ bool Navigation::gpsPathCallback([[maybe_unused]] const std::shared_ptr<fog_msgs
     return true;
   }
 
+  if (!airborne_) {
+    response->message = "Path rejected, vehicle not flying normally";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
   if (request->path.poses.empty()) {
     response->message = "Path rejected, path input does not contain any waypoints";
     response->success = false;
@@ -667,6 +695,13 @@ bool Navigation::localWaypointCallback([[maybe_unused]] const std::shared_ptr<fo
 
   if (!getting_desired_pose_) {
     response->message = "Goto rejected, missing desired pose";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (!airborne_) {
+    response->message = "Goto rejected, vehicle not flying normally";
     response->success = false;
     RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
     return true;
@@ -735,6 +770,13 @@ bool Navigation::gpsWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_
     return true;
   }
 
+  if (!airborne_) {
+    response->message = "Goto rejected, vehicle not flying normally";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
   if (status_ != IDLE) {
     if (!override_previous_commands_) {
       response->message = "Goto rejected, vehicle not IDLE";
@@ -776,6 +818,13 @@ bool Navigation::hoverCallback([[maybe_unused]] const std::shared_ptr<std_srvs::
 
   if (!getting_control_diagnostics_) {
     response->message = "Hover rejected, control_interface diagnostics not received";
+    response->success = false;
+    RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
+    return true;
+  }
+
+  if (!airborne_) {
+    response->message = "Hover rejected, vehicle not flying normally";
     response->success = false;
     RCLCPP_ERROR(this->get_logger(), "[%s]: %s", this->get_name(), response->message.c_str());
     return true;
@@ -912,7 +961,7 @@ void Navigation::navigationRoutine(void) {
             waypoints.second    = COMPLETE;
             replanning_counter_ = 0;
           } else {
-          
+
             RCLCPP_INFO(this->get_logger(), "[%s]: Current goal reached", this->get_name());
 
             if (current_waypoint_id_ >= waypoint_in_buffer_.size()) {
