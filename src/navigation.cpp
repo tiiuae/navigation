@@ -1155,13 +1155,14 @@ void Navigation::navigationRoutine(void) {
           break;
         }
 
-        std::scoped_lock lock(bumper_mutex_);
-        Eigen::Vector3d  avoidance_vector = bumperGetAvoidanceVector(*bumper_msg_);
+        {
+          std::scoped_lock lock(bumper_mutex_);
+          Eigen::Vector3d  avoidance_vector = bumperGetAvoidanceVector(*bumper_msg_);
 
-        if (avoidance_vector.norm() == 0) {
-          RCLCPP_INFO(this->get_logger(), "[Navigation]: Nothing to avoid");
-          status_ = IDLE;
-          break;
+          if (avoidance_vector.norm() == 0) {
+            RCLCPP_INFO(this->get_logger(), "[Navigation]: Nothing to avoid");
+            status_ = IDLE;
+            break;
         }
 
         Eigen::Vector4d new_goal = uav_pos_;
@@ -1169,6 +1170,7 @@ void Navigation::navigationRoutine(void) {
         new_goal.y() += avoidance_vector.y();
         new_goal.z() = desired_pose_.z() + avoidance_vector.z();  // TODO this is a temporary workaround until state estimation (odometry pkg) is integrated
         new_goal.w() = desired_pose_.w();
+        }
 
         RCLCPP_INFO(this->get_logger(), "[Bumper]: Avoiding obstacle by moving from [%.2f, %.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f, %.2f]", uav_pos_.x(),
                     uav_pos_.y(), uav_pos_.z(), uav_pos_.w(), new_goal.x(), new_goal.y(), new_goal.z(), new_goal.w());
