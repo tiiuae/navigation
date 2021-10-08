@@ -1163,20 +1163,20 @@ void Navigation::navigationRoutine(void) {
             RCLCPP_INFO(this->get_logger(), "[Navigation]: Nothing to avoid");
             status_ = IDLE;
             break;
+          }
+
+          Eigen::Vector4d new_goal = uav_pos_;
+          new_goal.x() += avoidance_vector.x();
+          new_goal.y() += avoidance_vector.y();
+          new_goal.z() = desired_pose_.z() + avoidance_vector.z();  // TODO this is a temporary workaround until state estimation (odometry pkg) is integrated
+          new_goal.w() = desired_pose_.w();
+
+          RCLCPP_INFO(this->get_logger(), "[Bumper]: Avoiding obstacle by moving from [%.2f, %.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f, %.2f]", uav_pos_.x(),
+                      uav_pos_.y(), uav_pos_.z(), uav_pos_.w(), new_goal.x(), new_goal.y(), new_goal.z(), new_goal.w());
+
+          waypoint_out_buffer_.clear();
+          waypoint_out_buffer_.push_back(new_goal);
         }
-
-        Eigen::Vector4d new_goal = uav_pos_;
-        new_goal.x() += avoidance_vector.x();
-        new_goal.y() += avoidance_vector.y();
-        new_goal.z() = desired_pose_.z() + avoidance_vector.z();  // TODO this is a temporary workaround until state estimation (odometry pkg) is integrated
-        new_goal.w() = desired_pose_.w();
-        }
-
-        RCLCPP_INFO(this->get_logger(), "[Bumper]: Avoiding obstacle by moving from [%.2f, %.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f, %.2f]", uav_pos_.x(),
-                    uav_pos_.y(), uav_pos_.z(), uav_pos_.w(), new_goal.x(), new_goal.y(), new_goal.z(), new_goal.w());
-
-        waypoint_out_buffer_.clear();
-        waypoint_out_buffer_.push_back(new_goal);
 
         if (!bumper_active_) {
           RCLCPP_WARN(this->get_logger(), "[%s]: Activating bumper", this->get_name());
