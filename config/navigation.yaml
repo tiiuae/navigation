@@ -10,7 +10,7 @@ planning:
   distance_penalty: 1.0
   greedy_penalty: 1.0
   planning_tree_resolution: 0.4
-  max_waypoint_distance: 0.4 # [m] or set negative to allow maximal segment length
+  max_waypoint_distance: 3.5 # [m] or set negative to allow maximal segment length
   max_yaw_step: 0.1 # [rad]
   planning_timeout: 4.5 # [s]
   replanning_limit: 3 # number of repeated attempts
