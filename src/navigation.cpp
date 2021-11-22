@@ -847,7 +847,11 @@ bool Navigation::hoverCallback([[maybe_unused]] const std::shared_ptr<std_srvs::
 
 /* navigationRoutine //{ */
 void Navigation::navigationRoutine(void) {
+
   if (is_initialized_ && getting_octomap_ && getting_control_diagnostics_ && getting_odometry_ && getting_desired_pose_) {
+
+    /* navigation execution //{ */
+    RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: NAVIGATION IS READY", this->get_name());
 
     if (bumper_enabled_) {
       std::scoped_lock lock(bumper_mutex_);
@@ -1160,7 +1164,7 @@ void Navigation::navigationRoutine(void) {
           Eigen::Vector3d  avoidance_vector = bumperGetAvoidanceVector(*bumper_msg_);
 
           if (avoidance_vector.norm() == 0) {
-            RCLCPP_INFO(this->get_logger(), "[Navigation]: Nothing to avoid");
+            RCLCPP_INFO(this->get_logger(), "[%s]: Nothing to avoid", this->get_name());
             status_ = IDLE;
             break;
           }
@@ -1168,11 +1172,11 @@ void Navigation::navigationRoutine(void) {
           Eigen::Vector4d new_goal = uav_pos_;
           new_goal.x() += avoidance_vector.x();
           new_goal.y() += avoidance_vector.y();
-          new_goal.z() = desired_pose_.z() + avoidance_vector.z();  // TODO this is a temporary workaround until state estimation (odometry pkg) is integrated
+          new_goal.z() = desired_pose_.z() + avoidance_vector.z();  // using desired position instead of the actual Z, because the estimate may drift
           new_goal.w() = desired_pose_.w();
 
-          RCLCPP_INFO(this->get_logger(), "[Bumper]: Avoiding obstacle by moving from [%.2f, %.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f, %.2f]", uav_pos_.x(),
-                      uav_pos_.y(), uav_pos_.z(), uav_pos_.w(), new_goal.x(), new_goal.y(), new_goal.z(), new_goal.w());
+          RCLCPP_INFO(this->get_logger(), "[Bumper]: Avoiding obstacle by moving from [%.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f]", uav_pos_.x(), uav_pos_.y(),
+                      uav_pos_.z(), new_goal.x(), new_goal.y(), new_goal.z());
 
           waypoint_out_buffer_.clear();
           waypoint_out_buffer_.push_back(new_goal);
@@ -1188,6 +1192,13 @@ void Navigation::navigationRoutine(void) {
       }
         //}
     }
+
+    //}
+
+  } else {
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "[%s]: Octomap: %s, ControlDiagnostics: %s, Odometry: %s, DesiredPose: %s",
+                         this->get_name(), getting_octomap_ ? "OK" : "MISSING", getting_control_diagnostics_ ? "OK" : "MISSING",
+                         getting_octomap_ ? "OK" : "MISSING", getting_desired_pose_ ? "OK" : "MISSING");
   }
 
   std_msgs::msg::String msg;
@@ -1244,7 +1255,6 @@ Eigen::Vector3d Navigation::bumperGetAvoidanceVector(const fog_msgs::msg::Obstac
 //}
 
 /* resamplePath //{ */
-
 std::vector<Eigen::Vector4d> Navigation::resamplePath(const std::vector<octomap::point3d> &waypoints, const double start_yaw, const double end_yaw) {
   std::vector<Eigen::Vector4d> ret;
 
@@ -1279,13 +1289,13 @@ std::vector<Eigen::Vector4d> Navigation::resamplePath(const std::vector<octomap:
     }
   }
 
-  std::cout << "[Navigation]: Padded " << waypoints.size() << " original waypoints to " << ret.size() << " points\n";
+  RCLCPP_INFO(this->get_logger(), "[%s]: Padded %ul original waypoints to %ul points", this->get_name(), waypoints.size(), ret.size());
 
   /* add yaw //{ */
 
   double delta_yaw = std::atan2(std::sin(end_yaw - start_yaw), std::cos(end_yaw - start_yaw));
   double yaw_step  = delta_yaw / ret.size();
-  std::cout << "[Navigation]: Start yaw: " << start_yaw << ", end yaw: " << end_yaw << ", yaw step: " << yaw_step << "\n";
+  RCLCPP_INFO(this->get_logger(), "[%s]: Start yaw: %.2f, end yaw: %.2f, yaw step: %.2f", this->get_name(), start_yaw, end_yaw, yaw_step);
 
   if (std::abs(yaw_step) <= max_yaw_step_) {
     ret.front().w() = start_yaw;
@@ -1295,8 +1305,8 @@ std::vector<Eigen::Vector4d> Navigation::resamplePath(const std::vector<octomap:
   } else {
     // resample again to limit yaw rate and avoid fast turning
     int resampling_factor = int(std::abs(yaw_step) / max_yaw_step_) + 1;
-    std::cout << "[Navigation]: Yaw step: " << yaw_step << " is greater than max yaw step: " << max_yaw_step_ << "\n";
-    std::cout << "[Navigation]: Resampling factor: " << resampling_factor << "\n";
+    RCLCPP_INFO(this->get_logger(), "[%s]: Yaw step: %.2f is greater than max yaw step: %.2f", this->get_name(), yaw_step, max_yaw_step_);
+    RCLCPP_INFO(this->get_logger(), "[%s]: Resampling factor: %.2f", this->get_name(), resampling_factor);
     std::vector<Eigen::Vector4d> resampled;
     for (const auto &p : ret) {
       for (int j = 0; j < resampling_factor; j++) {
@@ -1308,13 +1318,12 @@ std::vector<Eigen::Vector4d> Navigation::resamplePath(const std::vector<octomap:
     ret.clear();
     ret.insert(ret.end(), resampled.begin(), resampled.end());
     yaw_step = delta_yaw / ret.size();
-    std::cout << "[Navigation]: New yaw step: " << yaw_step << "\n";
+    RCLCPP_INFO(this->get_logger(), "[%s]: New yaw step: %.2f", this->get_name(), yaw_step);
     ret.front().w() = start_yaw;
     for (size_t j = 1; j < ret.size(); j++) {
       ret[j].w() = ret[j - 1].w() + yaw_step;
     }
   }
-
 
   //}
 
