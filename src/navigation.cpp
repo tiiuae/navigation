@@ -267,7 +267,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
 
   if (!loaded_successfully) {
     const std::string str = "Could not load all non-optional parameters. Shutting down.";
-    RCLCPP_ERROR(this->get_logger(), str);
+    RCLCPP_ERROR(this->get_logger(), str.c_str());
     rclcpp::shutdown();
     return;
   }
