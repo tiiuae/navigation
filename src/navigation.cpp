@@ -1002,6 +1002,7 @@ void Navigation::navigationRoutine(void) {
           w_start.x() = waypoints.first.front().x();
           w_start.y() = waypoints.first.front().y();
           w_start.z() = waypoints.first.front().z();
+
           Eigen::Vector3d w_end;
           w_end.x() = waypoints.first.back().x();
           w_end.y() = waypoints.first.back().y();
