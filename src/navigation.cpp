@@ -165,7 +165,7 @@ private:
 
 
   rclcpp::Client<fog_msgs::srv::Path>::SharedPtr            local_path_client_;
-  rclcpp::Client<fog_msgs::srv::Path>::SharedPtr            gps_path_client_;
+  //rclcpp::Client<fog_msgs::srv::Path>::SharedPtr            gps_path_client_;
   rclcpp::Client<fog_msgs::srv::WaypointToLocal>::SharedPtr waypoint_to_local_client_;
   rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedPtr     path_to_local_client_;
 
@@ -254,7 +254,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
 
   // clients
   local_path_client_        = this->create_client<fog_msgs::srv::Path>("~/local_path_out");
-  gps_path_client_          = this->create_client<fog_msgs::srv::Path>("~/gps_path_out");
+  //gps_path_client_          = this->create_client<fog_msgs::srv::Path>("~/gps_path_out");
   waypoint_to_local_client_ = this->create_client<fog_msgs::srv::WaypointToLocal>("~/waypoint_to_local_out");
   path_to_local_client_     = this->create_client<fog_msgs::srv::PathToLocal>("~/path_to_local_out");
 
