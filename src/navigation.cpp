@@ -145,13 +145,11 @@ private:
 
   // visualization params
   double tree_points_scale_;
-  double field_points_scale_;
   double expansions_points_scale_;
   double path_points_scale_;
   double goal_points_scale_;
 
   // publishers
-  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr field_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr binary_tree_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr expansion_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr path_publisher_;
@@ -260,7 +258,6 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   loaded_successfully &= parse_param("visualization.visualize_planner", visualize_planner_);
   loaded_successfully &= parse_param("visualization.show_unoccupied", show_unoccupied_);
   loaded_successfully &= parse_param("visualization.tree_points_scale", tree_points_scale_);
-  loaded_successfully &= parse_param("visualization.field_points_scale", field_points_scale_);
   loaded_successfully &= parse_param("visualization.expansions_points_scale", expansions_points_scale_);
   loaded_successfully &= parse_param("visualization.path_points_scale", path_points_scale_);
   loaded_successfully &= parse_param("visualization.goal_points_scale", goal_points_scale_);
@@ -283,7 +280,6 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   sub_opt.callback_group = callback_group_;
 
   // publishers
-  field_publisher_             = this->create_publisher<visualization_msgs::msg::Marker>("~/field_markers_out", 1);
   binary_tree_publisher_       = this->create_publisher<visualization_msgs::msg::Marker>("~/binary_tree_markers_out", 1);
   expansion_publisher_         = this->create_publisher<visualization_msgs::msg::Marker>("~/expansion_markers_out", 1);
   path_publisher_              = this->create_publisher<visualization_msgs::msg::Marker>("~/path_markers_out", 1);

@@ -56,7 +56,6 @@ def generate_launch_description():
                     ("~/binary_tree_markers_out", "~/binary_tree_markers"),
                     ("~/diagnostics_out", "~/diagnostics"),
                     ("~/expansion_markers_out", "~/expansion_markers"),
-                    ("~/field_markers_out", "~/field_markers"),
                     ("~/future_trajectory_out", "~/future_trajectory"),
                     ("~/goal_markers_out", "~/goal_markers"),
                     ("~/path_markers_out", "~/path_markers"),
