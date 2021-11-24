@@ -53,17 +53,16 @@ def generate_launch_description():
                     ("~/gps_waypoint_in", "~/gps_waypoint"),
                     ("~/gps_path_in", "~/gps_path"),
 
-                    ("~/binary_tree_markers_out", "~/binary_tree_markers"),
-                    ("~/diagnostics_out", "~/diagnostics"),
-                    ("~/expansion_markers_out", "~/expansion_markers"),
-                    ("~/future_trajectory_out", "~/future_trajectory"),
-                    ("~/goal_markers_out", "~/goal_markers"),
-                    ("~/path_markers_out", "~/path_markers"),
                     ("~/status_out", "~/status"),
+                    ("~/diagnostics_out", "~/diagnostics"),
+                    ("~/future_trajectory_out", "~/future_trajectory"),
+
+                    ("~/binary_tree_markers_out", "~/visualization/binary_tree_markers"),
+                    ("~/expansion_markers_out", "~/visualization/expansion_markers"),
+                    ("~/goal_markers_out", "~/visualization/goal_markers"),
+                    ("~/path_markers_out", "~/visualization/path_markers"),
 
                     ("~/local_path_out", "/" + DRONE_DEVICE_ID + "/control_interface/local_path"),
-                    ("~/gps_path_out", "/" + DRONE_DEVICE_ID + "/control_interface/gps_path"),
-
                     ("~/waypoint_to_local_out", "/" + DRONE_DEVICE_ID + "/control_interface/waypoint_to_local"),
                     ("~/path_to_local_out", "/" + DRONE_DEVICE_ID + "/control_interface/path_to_local"),
                 ],

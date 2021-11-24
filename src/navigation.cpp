@@ -186,7 +186,6 @@ private:
 
 
   rclcpp::Client<fog_msgs::srv::Path>::SharedPtr            local_path_client_;
-  rclcpp::Client<fog_msgs::srv::Path>::SharedPtr            gps_path_client_;
   rclcpp::Client<fog_msgs::srv::WaypointToLocal>::SharedPtr waypoint_to_local_client_;
   rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedPtr     path_to_local_client_;
 
@@ -210,7 +209,6 @@ private:
   void visualizePath(const std::vector<Eigen::Vector4d> &waypoints);
   void visualizeGoals(const std::deque<Eigen::Vector4d> &waypoints);
 
-  std_msgs::msg::ColorRGBA generateColor(const double r, const double g, const double b, const double a);
 
   std::vector<Eigen::Vector4d> resamplePath(const std::vector<octomap::point3d> &waypoints, const double start_yaw, const double end_yaw);
 
@@ -220,8 +218,11 @@ private:
   void publishDiagnostics();
   void publishFutureTrajectory(std::vector<Eigen::Vector4d> waypoints);
 
+  // bumper
   bool            bumperCheckObstacles(const fog_msgs::msg::ObstacleSectors &bumper_msg);
   Eigen::Vector3d bumperGetAvoidanceVector(const fog_msgs::msg::ObstacleSectors &bumper_msg);
+
+  std_msgs::msg::ColorRGBA generateColor(const double r, const double g, const double b, const double a);
 
   template <class T>
   bool parse_param(const std::string &param_name, T &param_dest);
@@ -300,7 +301,6 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
 
   // clients
   local_path_client_        = this->create_client<fog_msgs::srv::Path>("~/local_path_out");
-  gps_path_client_          = this->create_client<fog_msgs::srv::Path>("~/gps_path_out");
   waypoint_to_local_client_ = this->create_client<fog_msgs::srv::WaypointToLocal>("~/waypoint_to_local_out");
   path_to_local_client_     = this->create_client<fog_msgs::srv::PathToLocal>("~/path_to_local_out");
 

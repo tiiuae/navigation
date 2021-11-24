@@ -1,5 +1,5 @@
 planning:
-  euclidean_distance_cutoff: 3.0 # [m]
+  euclidean_distance_cutoff: 2.0 # [m]
   safe_obstacle_distance: 2.0 # [m]
   bumper_distance_factor: 0.9 # virtual bumper will intervene at (safe_obstacle_distance * bumper_distance_factor)
   unknown_is_occupied: false
@@ -9,8 +9,8 @@ planning:
   max_goal_distance: 50.0 # [m]
   distance_penalty: 1.0
   greedy_penalty: 1.0
-  planning_tree_resolution: 0.4
-  max_waypoint_distance: 3.5 # [m] or set negative to allow maximal segment length
+  planning_tree_resolution: 0.4 # [m/voxel]
+  max_waypoint_distance: 3.0 # [m] or set negative to allow maximal segment length
   max_yaw_step: 0.1 # [rad]
   planning_timeout: 4.5 # [s]
   replanning_limit: 3 # number of repeated attempts
@@ -22,7 +22,6 @@ visualization:
   visualize_planner: true
   show_unoccupied: false
   tree_points_scale: 0.22
-  field_points_scale: 0.22
   expansions_points_scale: 0.15
   path_points_scale: 0.18
   goal_points_scale : 0.28
