@@ -2,9 +2,9 @@ name: main
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, rel5_fix ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, rel5_fix ]
 
 jobs:
   tii-deb-build:
@@ -15,21 +15,15 @@ jobs:
         uses: actions/checkout@v2
         with:
           path: navigation
-
-      - name: Checkout ci-scripts
-        uses: actions/checkout@v2
-        with:
-          repository: tiiuae/fogsw-ci-scripts
-          path: fogsw-ci-scripts
+          ref: rel5_fix
 
       # Run docker build
       - name: Run fog-core docker build
         run: |
           set -eux
           mkdir bin
-          pushd fogsw-ci-scripts
-          export ROS=1
-          ./generate_deb.sh ../navigation ../bin/
+          pushd navigation
+          ./build.sh ../bin/
           popd
 
       - name: Install jfrog CLI tool
