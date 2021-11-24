@@ -1,0 +1,5 @@
+fog_msgs:
+    ubuntu: ros-foxy-fog-msgs
+dynamicEDT3D:
+  ubuntu: ros-foxy-dynamic-edt-3d
+
