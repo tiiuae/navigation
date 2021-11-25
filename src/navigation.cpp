@@ -1674,14 +1674,6 @@ bool Navigation::parse_param(const std::string &param_name, T &param_dest) {
   return true;
 }
 
-/* template bool Navigation::parse_param<int>(const std::string &param_name, int &param_dest); */
-/* template bool Navigation::parse_param<double>(const std::string &param_name, double &param_dest); */
-/* template bool Navigation::parse_param<float>(const std::string &param_name, float &param_dest); */
-/* template bool Navigation::parse_param<std::string>(const std::string &param_name, std::string &param_dest); */
-/* template bool Navigation::parse_param<bool>(const std::string &param_name, bool &param_dest); */
-/* template bool Navigation::parse_param<unsigned int>(const std::string &param_name, unsigned int &param_dest); */
-//}
-
 }  // namespace navigation
 #include <rclcpp_components/register_node_macro.hpp>
 RCLCPP_COMPONENTS_REGISTER_NODE(navigation::Navigation)
