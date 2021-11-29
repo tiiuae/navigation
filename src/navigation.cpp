@@ -49,7 +49,16 @@ enum status_t
   AVOIDING
 };
 
-const std::string STATUS_STRING[] = {"IDLE", "PLANNING", "COMMANDING", "MOVING", "AVOIDING"};
+enum waypoint_status_t
+{
+  EMPTY = 0,
+  ONGOING,
+  REACHED,
+  UNREACHABLE
+};
+
+const std::string STATUS_STRING[]          = {"IDLE", "PLANNING", "COMMANDING", "MOVING", "AVOIDING"};
+const std::string WAYPOINT_STATUS_STRING[] = {"EMPTY", "ONGOING", "REACHED", "UNREACHABLE"};
 
 double getYaw(const geometry_msgs::msg::Quaternion &q) {
   return atan2(2.0 * (q.z * q.w + q.x * q.y), -1.0 + 2.0 * (q.w * q.w + q.x * q.x));
@@ -111,7 +120,8 @@ private:
   std::mutex                       octree_mutex_;
   std::mutex                       bumper_mutex_;
   std::shared_ptr<octomap::OcTree> octree_;
-  status_t                         status_ = IDLE;
+  status_t                         status_          = IDLE;
+  waypoint_status_t                waypoint_status_ = EMPTY;
 
   std::vector<Eigen::Vector4d> waypoint_out_buffer_;
   std::deque<Eigen::Vector4d>  waypoint_in_buffer_;
@@ -854,7 +864,8 @@ void Navigation::navigationRoutine(void) {
       if (bumper_msg_ == nullptr || nanosecondsToSecs((this->get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0) {
         RCLCPP_WARN(this->get_logger(), "[%s]: Missing bumper data calling hover.", this->get_name());
         hover();
-        status_ = IDLE;
+        status_          = IDLE;
+        waypoint_status_ = EMPTY;
       }
     }
 
@@ -897,7 +908,8 @@ void Navigation::navigationRoutine(void) {
           RCLCPP_INFO(this->get_logger(), "[%s]: Manual control enabled, switching to IDLE", this->get_name());
           waypoint_in_buffer_.clear();
           waypoint_out_buffer_.clear();
-          status_ = IDLE;
+          status_          = IDLE;
+          waypoint_status_ = EMPTY;
           break;
         }
 
@@ -905,7 +917,8 @@ void Navigation::navigationRoutine(void) {
 
         if (hover_requested_) {
           hover();
-          status_ = IDLE;
+          status_          = IDLE;
+          waypoint_status_ = EMPTY;
           break;
         }
 
@@ -913,7 +926,8 @@ void Navigation::navigationRoutine(void) {
 
         if (octree_ == NULL || octree_->size() < 1) {
           RCLCPP_WARN(this->get_logger(), "[%s]: Octomap is NULL or empty! Abort planning and swiching to IDLE", this->get_name());
-          status_ = IDLE;
+          status_          = IDLE;
+          waypoint_status_ = EMPTY;
           break;
         }
 
@@ -933,10 +947,11 @@ void Navigation::navigationRoutine(void) {
 
         if (replanning_counter_ >= replanning_limit_) {
           RCLCPP_ERROR(this->get_logger(),
-                       "[%s]: No waypoint produced after %d repeated attempts. "
+                       "[%s]: No path produced after %d repeated attempts. "
                        "Please provide a new waypoint",
                        this->get_name(), replanning_counter_);
-          status_ = IDLE;
+          status_          = IDLE;
+          waypoint_status_ = UNREACHABLE;
         }
 
         navigation::AstarPlanner planner =
@@ -968,6 +983,7 @@ void Navigation::navigationRoutine(void) {
           } else {
 
             RCLCPP_INFO(this->get_logger(), "[%s]: Current goal reached", this->get_name());
+            waypoint_status_ = REACHED;
 
             if (current_waypoint_id_ >= waypoint_in_buffer_.size()) {
               RCLCPP_INFO(this->get_logger(), "[%s]: The last provided navigation goal has been visited. Switching to IDLE", this->get_name());
@@ -1059,7 +1075,8 @@ void Navigation::navigationRoutine(void) {
         }
         //}
 
-        status_ = COMMANDING;
+        status_          = COMMANDING;
+        waypoint_status_ = ONGOING;
         break;
       }
       //}
@@ -1077,7 +1094,8 @@ void Navigation::navigationRoutine(void) {
 
         if (hover_requested_) {
           hover();
-          status_ = IDLE;
+          status_          = IDLE;
+          waypoint_status_ = EMPTY;
           break;
         }
 
@@ -1114,7 +1132,8 @@ void Navigation::navigationRoutine(void) {
 
         if (hover_requested_) {
           hover();
-          status_ = IDLE;
+          status_          = IDLE;
+          waypoint_status_ = EMPTY;
           break;
         }
 
@@ -1359,18 +1378,19 @@ void Navigation::hover() {
 /* publishDiagnostics //{ */
 void Navigation::publishDiagnostics() {
   fog_msgs::msg::NavigationDiagnostics msg;
-  msg.header.stamp        = this->get_clock()->now();
-  msg.header.frame_id     = parent_frame_;
-  msg.state               = STATUS_STRING[status_];
-  msg.waypoints_in_buffer = waypoint_in_buffer_.size();
-  msg.bumper_active       = bumper_active_;
-  msg.current_waypoint_id = current_waypoint_id_;
-  msg.current_nav_goal[0] = current_goal_.x();
-  msg.current_nav_goal[1] = current_goal_.y();
-  msg.current_nav_goal[2] = current_goal_.z();
-  msg.last_nav_goal[0]    = last_goal_.x();
-  msg.last_nav_goal[1]    = last_goal_.y();
-  msg.last_nav_goal[2]    = last_goal_.z();
+  msg.header.stamp            = this->get_clock()->now();
+  msg.header.frame_id         = parent_frame_;
+  msg.state                   = STATUS_STRING[status_];
+  msg.current_waypoint_status = WAYPOINT_STATUS_STRING[waypoint_status_];
+  msg.waypoints_in_buffer     = waypoint_in_buffer_.size();
+  msg.bumper_active           = bumper_active_;
+  msg.current_waypoint_id     = current_waypoint_id_;
+  msg.current_nav_goal[0]     = current_goal_.x();
+  msg.current_nav_goal[1]     = current_goal_.y();
+  msg.current_nav_goal[2]     = current_goal_.z();
+  msg.last_nav_goal[0]        = last_goal_.x();
+  msg.last_nav_goal[1]        = last_goal_.y();
+  msg.last_nav_goal[2]        = last_goal_.z();
   diagnostics_publisher_->publish(msg);
 }
 //}
