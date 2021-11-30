@@ -234,7 +234,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   parse_param("goal_points_scale", goal_points_scale_);
   //}
 
-  callback_group_ = this->create_callback_group(rclcpp::callback_group::CallbackGroupType::Reentrant);
+  callback_group_ = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
   // publishers
   field_publisher_       = this->create_publisher<visualization_msgs::msg::Marker>("~/field_markers_out", 1);
