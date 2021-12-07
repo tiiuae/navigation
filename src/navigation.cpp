@@ -1322,7 +1322,7 @@ std::vector<Eigen::Vector4d> Navigation::resamplePath(const std::vector<octomap:
     // resample again to limit yaw rate and avoid fast turning
     int resampling_factor = int(std::abs(yaw_step) / max_yaw_step_) + 1;
     RCLCPP_INFO(this->get_logger(), "[%s]: Yaw step: %.2f is greater than max yaw step: %.2f", this->get_name(), yaw_step, max_yaw_step_);
-    RCLCPP_INFO(this->get_logger(), "[%s]: Resampling factor: %.2f", this->get_name(), resampling_factor);
+    RCLCPP_INFO(this->get_logger(), "[%s]: Resampling factor: %d", this->get_name(), resampling_factor);
     std::vector<Eigen::Vector4d> resampled;
     for (const auto &p : ret) {
       for (int j = 0; j < resampling_factor; j++) {
