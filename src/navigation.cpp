@@ -277,7 +277,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
 
   if (!loaded_successfully) {
     const std::string str = "Could not load all non-optional parameters. Shutting down.";
-    RCLCPP_ERROR(this->get_logger(), str);
+    RCLCPP_ERROR(this->get_logger(), str.c_str());
     rclcpp::shutdown();
     return;
   }
@@ -1305,7 +1305,7 @@ std::vector<Eigen::Vector4d> Navigation::resamplePath(const std::vector<octomap:
     }
   }
 
-  RCLCPP_INFO(this->get_logger(), "[%s]: Padded %ul original waypoints to %ul points", this->get_name(), waypoints.size(), ret.size());
+  RCLCPP_INFO(this->get_logger(), "[%s]: Padded %lu original waypoints to %lu points", this->get_name(), waypoints.size(), ret.size());
 
   /* add yaw //{ */
 
@@ -1684,7 +1684,7 @@ std_msgs::msg::ColorRGBA Navigation::generateColor(const double r, const double 
 /* parse_param //{ */
 template <class T>
 bool Navigation::parse_param(const std::string &param_name, T &param_dest) {
-  this->declare_parameter(param_name);
+  this->declare_parameter<T>(param_name);
   if (!this->get_parameter(param_name, param_dest)) {
     RCLCPP_ERROR(this->get_logger(), "[%s]: Could not load param '%s'", this->get_name(), param_name.c_str());
     return false;
