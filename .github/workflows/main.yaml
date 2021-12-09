@@ -10,32 +10,25 @@ jobs:
   tii-deb-build:
     runs-on: ubuntu-latest
     steps:
-
       - name: Checkout navigation
         uses: actions/checkout@v2
         with:
           path: navigation
 
-      - name: Checkout ci-scripts
-        uses: actions/checkout@v2
-        with:
-          repository: tiiuae/fogsw-ci-scripts
-          path: fogsw-ci-scripts
-
       # Run docker build
-      - name: Run fog-core docker build
+      - name: Run fog_navigation docker build
         run: |
           set -eux
           mkdir bin
-          pushd fogsw-ci-scripts
+          pushd navigation
           export ROS=1
-          ./generate_deb.sh ../navigation ../bin/
+          ./build.sh ../bin/
           popd
 
       - name: Install jfrog CLI tool
         env:
-          JFROG_CLI_URL: https://artifactory.ssrc.fi/artifactory/gen-public-local/tools/jfrog/jfrog-1.45.2.tar.gz
-        if: github.event_name == 'push' || github.event.action == 'rebuild'
+          JFROG_CLI_URL: https://ssrc.jfrog.io/artifactory/ssrc-gen-public-remote-cache/tools/jfrog/jfrog-1.45.2.tar.gz
+        if: github.event_name == 'push'
         run: |
           set -exu
           mkdir -p "$GITHUB_WORKSPACE/.jfrog/bin"
@@ -53,7 +46,7 @@ jobs:
           ARCHITECTURE: amd64
           BUILD_NAME: navigation
           CI: true
-        if: github.event_name == 'push' || github.event.action == 'rebuild'
+        if: github.event_name == 'push'
         run: |
           set -exu
           jfrog rt c import "$ARTIFACTORY_TOKEN"
@@ -69,14 +62,3 @@ jobs:
           jfrog rt bpr "$BUILD_NAME" "$GITHUB_SHA" "$ARTIFACTORY_REPO" \
                        --status dev \
                        --comment "development build"
-
-      - name: trigger fog-drone build
-        env:
-          USER: ${{ secrets.DISPATCH_USER }}
-          TOKEN: ${{ secrets.DISPATCH_TOKEN }}
-        if: github.event_name == 'push'
-        run: |
-          curl -X POST https://api.github.com/repos/tiiuae/dronsole-containers/dispatches \
-               -H 'Accept: application/vnd.github.everest-preview+json' \
-               -u $USER:$TOKEN \
-               --data '{"event_type": "rebuild-fog-drone", "client_payload": { "repository": "'"$GITHUB_REPOSITORY"'" }}'
