@@ -28,7 +28,7 @@ jobs:
       - name: Install jfrog CLI tool
         env:
           JFROG_CLI_URL: https://ssrc.jfrog.io/artifactory/ssrc-gen-public-remote-cache/tools/jfrog/jfrog-1.45.2.tar.gz
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event.action == 'rebuild'
         run: |
           set -exu
           mkdir -p "$GITHUB_WORKSPACE/.jfrog/bin"
@@ -46,7 +46,7 @@ jobs:
           ARCHITECTURE: amd64
           BUILD_NAME: navigation
           CI: true
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event.action == 'rebuild'
         run: |
           set -exu
           jfrog rt c import "$ARTIFACTORY_TOKEN"
