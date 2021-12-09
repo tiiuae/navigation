@@ -23,7 +23,7 @@ fi
 
 rosdep_out=$(rosdep check -v --from-paths src 2>&1 | grep "resolving for resources" )
 ALL_PKGS=$(echo $rosdep_out | sed 's/.*\[\(.*\)\].*/\1/' | tr ',' '\n' | tr -d ' ')
-echo "[INFO] All packages: $ALL_PKGS"
+echo "[INFO] All packages: $(echo $ALL_PKGS|tr '\n' ' ')"
 PKGS_TO_BUILD=""
 pushd src > /dev/null
 

@@ -74,12 +74,12 @@ version=$(grep "<version>" package.xml | sed 's/[^>]*>\([^<"]*\).*/\1/')
 
 echo "[INFO] Version: ${version}."
 
-title="$version ($(date +%Y-%m-%d))"
-cat << EOF_CHANGELOG > CHANGELOG.rst
-$title
-$(printf '%*s' "${#title}" | tr ' ' "-")
-* commit: ${git_commit_hash}
-EOF_CHANGELOG
+#title="$version ($(date +%Y-%m-%d))"
+#cat << EOF_CHANGELOG > CHANGELOG.rst
+#$title
+#$(printf '%*s' "${#title}" | tr ' ' "-")
+#* commit: ${git_commit_hash}
+#EOF_CHANGELOG
 
 # Extract not satisfied dependencies from output, check if they are exist in ../underlay.repos
 if rosdep check --from-paths ${mod_dir} 1> /dev/null 2>&1; then
@@ -108,7 +108,7 @@ bloom-generate rosdebian --os-name ubuntu --os-version focal --ros-distro ${ROS_
     && fakeroot debian/rules binary || exit 1
 
 echo "[INFO] Clean up."
-rm -rf deps_ws obj-x86_64-linux-gnu debian CHANGELOG.rst
+rm -rf deps_ws obj-x86_64-linux-gnu debian
 
 echo "[INFO] Move debian packages to volume."
 mv ${mod_dir}/../*.deb ${mod_dir}/../*.ddeb ${mod_dir}
