@@ -1214,7 +1214,7 @@ void Navigation::navigationRoutine(void) {
   } else {
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "[%s]: Octomap: %s, ControlDiagnostics: %s, Odometry: %s, DesiredPose: %s",
                          this->get_name(), getting_octomap_ ? "OK" : "MISSING", getting_control_diagnostics_ ? "OK" : "MISSING",
-                         getting_octomap_ ? "OK" : "MISSING", getting_desired_pose_ ? "OK" : "MISSING");
+                         getting_odometry_ ? "OK" : "MISSING", getting_desired_pose_ ? "OK" : "MISSING");
   }
 
   std_msgs::msg::String msg;
