@@ -14,23 +14,21 @@ yamlpath=${mod_dir}/packaging/rosdep.yaml
 if [ -e ${yamlpath} ]; then
         echo "[INFO] Replace ROS_DISTRO in rosdep.yaml"
         sudo sed -i "s/ROS_DISTRO/${ROS_DISTRO}/g" ${yamlpath}
+        echo "[INFO] Add module specific dependencies"
+        cat $yamlpath
+        mkdir -p /etc/ros/rosdep/sources.list.d
+        echo "yaml file://${yamlpath}" > /etc/ros/rosdep/sources.list.d/51-fogsw-module.list
 fi
-
-echo "[INFO] Add module specific dependencies"
-cat $yamlpath
-mkdir -p /etc/ros/rosdep/sources.list.d
-echo "yaml file://${yamlpath}" > /etc/ros/rosdep/sources.list.d/51-fogsw-module.list
 
 echo "[INFO] Updating rosdep"
 rosdep update
 
 apt update
 echo "[INFO] Running rosdep install.."
-ls ${mod_dir}
-if rosdep install --from-paths ${mod_dir} -r -y --rosdistro ${ROS_DISTRO} 1> /dev/null 2>&1; then
+if rosdep install --from-paths ${mod_dir}/packaging -r -y --rosdistro ${ROS_DISTRO} 1> /dev/null 2>&1; then
 	echo "[INFO] rosdep install finished successfully."
 else
-	echo "[ERROR] Some dependencies missing."
+	echo "[ERROR] Some dependencies missing. It will be built using underlay.repos."
 fi
 
 exit 0

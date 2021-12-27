@@ -81,21 +81,16 @@ echo "[INFO] Version: ${version}."
 #* commit: ${git_commit_hash}
 #EOF_CHANGELOG
 
-# Extract not satisfied dependencies from output, check if they are exist in ../underlay.repos
-if rosdep check --from-paths ${mod_dir} 1> /dev/null 2>&1; then
-	echo "[INFO] Dependencies are satisfied."
-else
-	echo "[INFO] System dependencies have not been satisfied. Running rosdep install.."
-	echo "[INFO] Building dependencies using underlay.repos."
-	${mod_dir}/packaging/build_deps.sh ${mod_dir}
-fi
-
 if [ -e ${mod_dir}/ros2_ws ]; then
 	# From fog-sw repo.
 	source ${mod_dir}/ros2_ws/install/setup.bash
 fi
-if [ -e ${mod_dir}/deps_ws ]; then
-	source ${mod_dir}/deps_ws/install/setup.bash
+if [ -e ${mod_dir}/../deps_ws ]; then
+	source ${mod_dir}/../deps_ws/install/setup.bash
+fi
+
+if [ -e ${mod_dir}/debian ]; then
+	cp -r debian debian_bak
 fi
 
 bloom-generate rosdebian --os-name ubuntu --os-version focal --ros-distro ${ROS_DISTRO} --place-template-files \
@@ -108,7 +103,14 @@ bloom-generate rosdebian --os-name ubuntu --os-version focal --ros-distro ${ROS_
     && fakeroot debian/rules binary || exit 1
 
 echo "[INFO] Clean up."
-rm -rf deps_ws obj-x86_64-linux-gnu debian
+
+rm -rf obj-x86_64-linux-gnu debian
+
+if [ -e ${mod_dir}/debian_bak ]; then
+	cp -r debian_bak debian
+	rm -rf debian_bak
+fi
+
 
 echo "[INFO] Move debian packages to volume."
 mv ${mod_dir}/../*.deb ${mod_dir}/../*.ddeb ${mod_dir}

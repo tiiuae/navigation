@@ -8,7 +8,7 @@ build_number=${GITHUB_RUN_NUMBER:=0}
 
 ros_distro=${ROS_DISTRO:=foxy}
 
-iname=fog-navigation
+iname=${PACKAGE_NAME:=navigation}
 
 docker build \
   --build-arg UID=$(id -u) \
@@ -16,7 +16,7 @@ docker build \
   --build-arg ROS_DISTRO=${ros_distro} \
   --build-arg PACKAGE_NAME=${iname} \
   --pull \
-  -f Dockerfile -t "${iname}:latest" .
+  -f Dockerfile.build_env -t "${iname}:latest" .
 
 docker run \
   --rm \

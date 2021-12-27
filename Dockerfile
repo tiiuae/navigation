@@ -1,41 +1,31 @@
 # fog-sw BUILDER
+ARG FROM_IMAGE
+FROM $FROM_IMAGE as fog-sw-builder
 ARG ROS_DISTRO="galactic"
-FROM ros:${ROS_DISTRO}-ros-base as fog-sw-builder
-
 ARG UID=1000
 ARG GID=1000
-ARG BUILD_NUMBER
-ARG COMMIT_ID
-ARG GIT_VER
 ARG PACKAGE_NAME
-# Install build dependencies
-RUN apt-get update -y && apt-get install -y --no-install-recommends \
-    curl \
-    python3-bloom \
-    fakeroot \
-    dh-make \
-    libboost-dev \
-    && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -g $GID builder && \
-    useradd -m -u $UID -g $GID -g builder builder && \
-    usermod -aG sudo builder && \
-    echo 'builder ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-
-RUN echo "deb [trusted=yes] https://ssrc.jfrog.io/artifactory/ssrc-debian-public-remote focal fog-sw" >> /etc/apt/sources.list
-
-RUN mkdir -p /$PACKAGE_NAME/packaging
-
-COPY packaging/rosdep.yaml packaging/rosdep.sh /$PACKAGE_NAME/packaging/
-COPY underlay.repos package.xml /$PACKAGE_NAME/
-
-RUN /$PACKAGE_NAME/packaging/rosdep.sh /$PACKAGE_NAME
-
-RUN chown -R builder:builder /$PACKAGE_NAME
+WORKDIR /$PACKAGE_NAME/main_ws
+USER root
+ADD . /$PACKAGE_NAME/main_ws/src
+RUN chown -R builder:builder /$PACKAGE_NAME/main_ws
 
 USER builder
 
-VOLUME /$PACKAGE_NAME/sources
-WORKDIR /$PACKAGE_NAME/sources
+RUN if [ -e /$PACKAGE_NAME/deps_ws ]; then \
+        . /$PACKAGE_NAME/deps_ws/install/setup.sh && \
+        colcon build; \
+    elif [ -e /opt/ros/${ROS_DISTRO}/setup.sh ]; then \
+        . /opt/ros/${ROS_DISTRO}/setup.sh && \
+        colcon build; \
+    fi 
 
-RUN rosdep update
+RUN sed --in-place \
+      's|^source .*|source "/'$PACKAGE_NAME'/main_ws/install/setup.bash"|' \
+      /$PACKAGE_NAME/entrypoint.sh && \  
+        chmod +x /$PACKAGE_NAME/entrypoint.sh
+
+ENV PACKAGE_NAME $PACKAGE_NAME
+WORKDIR /$PACKAGE_NAME
+ENTRYPOINT "/"$PACKAGE_NAME"/entrypoint.sh"
