@@ -53,7 +53,6 @@ def generate_launch_description():
                     ("~/gps_waypoint_in", "~/gps_waypoint"),
                     ("~/gps_path_in", "~/gps_path"),
 
-                    ("~/status_out", "~/status"),
                     ("~/diagnostics_out", "~/diagnostics"),
                     ("~/future_trajectory_out", "~/future_trajectory"),
 
