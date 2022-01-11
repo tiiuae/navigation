@@ -126,12 +126,13 @@ namespace navigation
     std::mutex state_mutex_;
     enum nav_state_t
     {
-      idle = 0,
+      not_initialized,
+      idle,
       planning,
       commanding,
       moving,
       avoiding
-    }  state_ = nav_state_t::idle;
+    } state_ = nav_state_t::not_initialized;
     enum waypoint_state_t
     {
       empty = 0,
@@ -147,6 +148,8 @@ namespace navigation
     rclcpp::TimerBase::SharedPtr execution_timer_;
     void navigationRoutine();
 
+    void state_navigation_common();
+    void state_navigation_not_initialized();
     void state_navigation_idle();
     void state_navigation_planning();
     void state_navigation_commanding();
@@ -971,50 +974,33 @@ namespace navigation
   {
     std::scoped_lock lck(state_mutex_);
 
-    if (is_initialized_ && getting_octomap_ && getting_control_diagnostics_ && getting_odometry_ && getting_desired_pose_)
+    state_navigation_common();
+
+    switch (state_)
     {
-      RCLCPP_INFO_ONCE(get_logger(), "NAVIGATION IS READY");
+      case nav_state_t::not_initialized:
+        state_navigation_not_initialized();
+        break;
 
-      if (bumper_enabled_)
-      {
-        std::scoped_lock lock(bumper_mutex_);
-        if (bumper_msg_ == nullptr || nanosecondsToSecs((get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0)
-        {
-          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Missing bumper data calling hover.");
-          hover();
-          state_ = nav_state_t::idle;
-          waypoint_state_ = waypoint_state_t::empty;
-        }
-      }
+      case nav_state_t::idle:
+        state_navigation_idle();
+        break;
 
-      switch (state_)
-      {
-        case nav_state_t::idle:
-          state_navigation_idle();
-          break;
+      case nav_state_t::planning:
+        state_navigation_planning();
+        break;
 
-        case nav_state_t::planning:
-          state_navigation_planning();
-          break;
+      case nav_state_t::commanding:
+        state_navigation_commanding();
+        break;
 
-        case nav_state_t::commanding:
-          state_navigation_commanding();
-          break;
+      case nav_state_t::moving:
+        state_navigation_moving();
+        break;
 
-        case nav_state_t::moving:
-          state_navigation_moving();
-          break;
-
-        case nav_state_t::avoiding:
-          state_navigation_avoiding();
-          break;
-      }
-    }
-    else
-    {
-      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Octomap: %s, ControlDiagnostics: %s, Odometry: %s, DesiredPose: %s",
-                           getting_octomap_ ? "OK" : "MISSING", getting_control_diagnostics_ ? "OK" : "MISSING",
-                           getting_odometry_ ? "OK" : "MISSING", getting_desired_pose_ ? "OK" : "MISSING");
+      case nav_state_t::avoiding:
+        state_navigation_avoiding();
+        break;
     }
 
     std_msgs::msg::String msg;
@@ -1024,39 +1010,59 @@ namespace navigation
   }
   //}
 
-  /* state_navigation_idle() method //{ */
-  void Navigation::state_navigation_idle()
+  /* state_navigation_common() method //{ */
+  void Navigation::state_navigation_common()
   {
+    if (state_ == nav_state_t::not_initialized)
+      return;
+
+    // common checks for all states except unitialized
     if (bumper_enabled_)
     {
       std::scoped_lock lock(bumper_mutex_);
-
-      const bool obstacle_detected = bumperCheckObstacles(*bumper_msg_);
-      if (!bumper_active_)
+      if (bumper_msg_ == nullptr || nanosecondsToSecs((get_clock()->now() - bumper_msg_->header.stamp).nanoseconds()) > 1.0)
       {
-        if (obstacle_detected)
-        {
-          RCLCPP_WARN(get_logger(), "[Bumper] - obstacle in proximity! Starting avoidance");
-          state_ = nav_state_t::avoiding;
-          return;
-        }
-      }
-      else if (!obstacle_detected)
-      {
-        RCLCPP_WARN(get_logger(), "Deactivating bumper");
-        bumper_active_ = false;
-        return;
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Missing bumper data calling hover.");
+        hover();
+        waypoint_state_ = waypoint_state_t::empty;
+        state_ = nav_state_t::commanding;
       }
     }
-
-    if (waypoints_in_.empty())
+  
+    if (manual_control_)
     {
-      const std::vector<vec4_t> waypoints = {uav_pos_};
-      publishFutureTrajectory(waypoints);
+      RCLCPP_INFO(get_logger(), "Manual control enabled. Clearing waypoints and switching to idle");
+      waypoints_in_.clear();
+      waypoint_state_ = waypoint_state_t::empty;
+      state_ = nav_state_t::idle;
+      return;
+    }
+  
+    if (hover_requested_)
+    {
+      RCLCPP_WARN(get_logger(), "Hover requested! Aborting nav_state_t::planning and swiching to commanding");
+      waypoints_in_.clear();
+      waypoint_state_ = waypoint_state_t::empty;
+      hover();
+      state_ = nav_state_t::commanding;
+      hover_requested_ = false;
+      return;
+    }
+  }
+  //}
+
+  /* state_navigation_not_initialized() method //{ */
+  void Navigation::state_navigation_not_initialized()
+  {
+    if (is_initialized_ && getting_octomap_ && getting_control_diagnostics_ && getting_odometry_ && getting_desired_pose_)
+    {
+      state_ = nav_state_t::idle;
     }
     else
     {
-      state_ = nav_state_t::planning;
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "Octomap: %s, ControlDiagnostics: %s, Odometry: %s, DesiredPose: %s",
+                           getting_octomap_ ? "OK" : "MISSING", getting_control_diagnostics_ ? "OK" : "MISSING",
+                           getting_odometry_ ? "OK" : "MISSING", getting_desired_pose_ ? "OK" : "MISSING");
     }
   }
   //}
@@ -1068,25 +1074,6 @@ namespace navigation
 
     /* initial checks //{ */
     
-    if (manual_control_)
-    {
-      RCLCPP_INFO(get_logger(), "Manual control enabled. Clearing waypoints and switching to idle");
-      waypoints_in_.clear();
-      state_ = nav_state_t::idle;
-      waypoint_state_ = waypoint_state_t::empty;
-      return;
-    }
-    
-    if (hover_requested_)
-    {
-      RCLCPP_WARN(get_logger(), "Hover requested! Aborting nav_state_t::planning and swiching to commanding");
-      waypoints_in_.clear();
-      hover();
-      state_ = nav_state_t::commanding;
-      waypoint_state_ = waypoint_state_t::empty;
-      hover_requested_ = false;
-      return;
-    }
     
     if (octree_ == nullptr || octree_->size() < 1)
     {
@@ -1167,25 +1154,6 @@ namespace navigation
   /* state_navigation_commanding() method //{ */
   void Navigation::state_navigation_commanding()
   {
-    if (manual_control_)
-    {
-      RCLCPP_INFO(get_logger(), "Manual control enabled, switching to idle");
-      waypoints_in_.clear();
-      state_ = nav_state_t::idle;
-      return;
-    }
-
-    if (hover_requested_)
-    {
-      RCLCPP_WARN(get_logger(), "Hover requested! Aborting nav_state_t::planning and swiching to commanding");
-      waypoints_in_.clear();
-      hover();
-      state_ = nav_state_t::commanding;
-      waypoint_state_ = waypoint_state_t::empty;
-      hover_requested_ = false;
-      return;
-    }
-
     if (future_ready(local_path_future_))
     {
       const auto resp_ptr = local_path_future_.get();
@@ -1222,16 +1190,6 @@ namespace navigation
       return;
     }
 
-    if (hover_requested_)
-    {
-      RCLCPP_WARN(get_logger(), "Hover requested! Aborting nav_state_t::planning and swiching to commanding");
-      waypoints_in_.clear();
-      hover();
-      state_ = nav_state_t::commanding;
-      waypoint_state_ = waypoint_state_t::empty;
-      hover_requested_ = false;
-      return;
-    }
 
     if (bumper_enabled_)
     {
