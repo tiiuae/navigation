@@ -1,5 +1,5 @@
 repositories:
-  src/fog_msgs:
+  fog_msgs:
     type: git
     url: https://github.com/tiiuae/fog_msgs.git
-    version: 8f11227033e10f7763cd20f3e6ddd56251163c80
+    version: 1d2cf3fd1f5abe4ce03f87787c8479ee300ca688

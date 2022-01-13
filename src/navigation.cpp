@@ -41,10 +41,20 @@ enum status_t
   IDLE = 0,
   PLANNING,
   COMMANDING,
-  MOVING
+  MOVING,
+  AVOIDING // Not used for now
 };
 
-const std::string STATUS_STRING[] = {"IDLE", "PLANNING", "COMMANDING", "MOVING"};
+enum waypoint_status_t
+{
+  EMPTY = 0,
+  ONGOING,
+  REACHED,
+  UNREACHABLE
+};
+
+const std::string STATUS_STRING[] = {"IDLE", "PLANNING", "COMMANDING", "MOVING", "AVOIDING"};
+const std::string WAYPOINT_STATUS_STRING[] = {"EMPTY", "ONGOING", "REACHED", "UNREACHABLE"};
 
 double getYaw(const geometry_msgs::msg::Quaternion &q) {
   return atan2(2.0 * (q.z * q.w + q.x * q.y), -1.0 + 2.0 * (q.w * q.w + q.x * q.x));
@@ -101,10 +111,12 @@ private:
   std::shared_ptr<octomap::OcTree> octree_;
   std::mutex                       status_mutex_;
   status_t                         status_ = IDLE;
+  waypoint_status_t                waypoint_status_ = EMPTY;
 
   std::vector<Eigen::Vector4d> waypoint_out_buffer_;
   std::vector<Eigen::Vector4d> waypoint_in_buffer_;
-
+  size_t                       current_waypoint_id_;
+  
   rclcpp::CallbackGroup::SharedPtr callback_group_;
   rclcpp::TimerBase::SharedPtr     execution_timer_;
   void                             navigationRoutine(void);
@@ -234,6 +246,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   parse_param("goal_points_scale", goal_points_scale_);
   //}
 
+  current_waypoint_id_ = 0;
   callback_group_ = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
   // publishers
@@ -359,6 +372,7 @@ void Navigation::gotoCallback(const nav_msgs::msg::Path::UniquePtr msg) {
   RCLCPP_INFO(this->get_logger(), "[%s]: Recieved %ld waypoints", this->get_name(), msg->poses.size());
 
   waypoint_in_buffer_.clear();
+  current_waypoint_id_ = 0;
   for (const auto &p : msg->poses) {
     Eigen::Vector4d point;
     point[0] = p.pose.position.x;
@@ -464,6 +478,7 @@ bool Navigation::localPathCallback([[maybe_unused]] const std::shared_ptr<fog_ms
   }
 
   waypoint_in_buffer_.clear();
+  current_waypoint_id_ = 0;
   for (const auto &p : request->path.poses) {
     Eigen::Vector4d point;
     point[0] = p.pose.position.x;
@@ -572,6 +587,7 @@ bool Navigation::localWaypointCallback([[maybe_unused]] const std::shared_ptr<fo
   }
 
   waypoint_in_buffer_.clear();
+  current_waypoint_id_ = 0;
   Eigen::Vector4d point;
   point[0] = request->goal[0];
   point[1] = request->goal[1];
@@ -681,6 +697,7 @@ void Navigation::navigationRoutine(void) {
   if (is_initialized_ && getting_octomap_ && getting_control_diagnostics_ && getting_odometry_) {
 
     std::scoped_lock lock(status_mutex_);
+    waypoint_status_ = EMPTY;
 
     switch (status_) {
 
@@ -697,6 +714,7 @@ void Navigation::navigationRoutine(void) {
         if (hover_requested_) {
           hover();
           status_ = IDLE;
+          waypoint_status_ = EMPTY;
           break;
         }
 
@@ -705,6 +723,7 @@ void Navigation::navigationRoutine(void) {
         if (octree_ == NULL || octree_->size() < 1) {
           RCLCPP_WARN(this->get_logger(), "[%s]: Octomap is NULL or empty! Abort planning", this->get_name());
           status_ = IDLE;
+          waypoint_status_ = EMPTY;
           break;
         }
 
@@ -728,6 +747,7 @@ void Navigation::navigationRoutine(void) {
                        "Please provide a new waypoint",
                        this->get_name(), replanning_counter_);
           status_ = IDLE;
+          waypoint_status_ = UNREACHABLE;
         }
 
         navigation::AstarPlanner planner =
@@ -746,6 +766,8 @@ void Navigation::navigationRoutine(void) {
         /* GOAL_REACHED //{ */
         if (waypoints.second == GOAL_REACHED) {
           RCLCPP_INFO(this->get_logger(), "[%s]: Current goal reached", this->get_name());
+            waypoint_status_ = REACHED;
+            current_waypoint_id_++;
           break;
         }
         //}
@@ -824,6 +846,7 @@ void Navigation::navigationRoutine(void) {
         //}
 
         status_ = COMMANDING;
+        waypoint_status_ = ONGOING;
         break;
       }
       //}
@@ -834,6 +857,7 @@ void Navigation::navigationRoutine(void) {
         if (hover_requested_) {
           hover();
           status_ = IDLE;
+          waypoint_status_ = EMPTY;
           break;
         }
 
@@ -861,6 +885,7 @@ void Navigation::navigationRoutine(void) {
         if (hover_requested_) {
           hover();
           status_ = IDLE;
+          waypoint_status_ = EMPTY;
           break;
         }
 
@@ -973,16 +998,19 @@ void Navigation::hover() {
 /* publishDiagnostics //{ */
 void Navigation::publishDiagnostics() {
   fog_msgs::msg::NavigationDiagnostics msg;
-  msg.header.stamp        = this->get_clock()->now();
-  msg.header.frame_id     = parent_frame_;
-  msg.state               = STATUS_STRING[status_];
-  msg.waypoints_in_buffer = waypoint_in_buffer_.size();
-  msg.current_nav_goal[0] = current_goal_.x();
-  msg.current_nav_goal[1] = current_goal_.y();
-  msg.current_nav_goal[2] = current_goal_.z();
-  msg.last_nav_goal[0]    = last_goal_.x();
-  msg.last_nav_goal[1]    = last_goal_.y();
-  msg.last_nav_goal[2]    = last_goal_.z();
+  msg.header.stamp            = this->get_clock()->now();
+  msg.header.frame_id         = parent_frame_;
+  msg.state                   = STATUS_STRING[status_];
+  msg.current_waypoint_status = WAYPOINT_STATUS_STRING[waypoint_status_];
+  msg.waypoints_in_buffer     = waypoint_in_buffer_.size();
+  msg.bumper_active           = false;
+  msg.current_waypoint_id     = current_waypoint_id_;
+  msg.current_nav_goal[0]     = current_goal_.x();
+  msg.current_nav_goal[1]     = current_goal_.y();
+  msg.current_nav_goal[2]     = current_goal_.z();
+  msg.last_nav_goal[0]        = last_goal_.x();
+  msg.last_nav_goal[1]        = last_goal_.y();
+  msg.last_nav_goal[2]        = last_goal_.z();
   diagnostics_publisher_->publish(msg);
 }
 //}

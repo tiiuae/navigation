@@ -1,35 +1,31 @@
 # fog-sw BUILDER
-FROM ros:foxy-ros-base as fog-sw-builder
+ARG FROM_IMAGE
+FROM $FROM_IMAGE as fog-sw-builder
+ARG ROS_DISTRO="galactic"
+ARG UID=1000
+ARG GID=1000
+ARG PACKAGE_NAME
 
-ARG BUILD_NUMBER
-ARG COMMIT_ID
-ARG GIT_VER
+WORKDIR /$PACKAGE_NAME/main_ws
+USER root
+ADD . /$PACKAGE_NAME/main_ws/src
+RUN chown -R builder:builder /$PACKAGE_NAME/main_ws
 
-ENV ROS_DISTRO_="foxy"
+USER builder
 
-# Install build dependencies
-RUN apt-get update -y && apt-get install -y --no-install-recommends \
-    curl \
-    python3-bloom \
-    fakeroot \
-    dh-make \
-    ros-${ROS_DISTRO_}-octomap \
-    ros-${ROS_DISTRO_}-octomap-msgs \
-    ros-${ROS_DISTRO_}-dynamic-edt-3d \
-    ros-${ROS_DISTRO_}-laser-geometry \
-    ros-${ROS_DISTRO_}-pcl-conversions \
-    ros-${ROS_DISTRO_}-pcl-msgs \
-    && rm -rf /var/lib/apt/lists/*
+RUN if [ -e /$PACKAGE_NAME/deps_ws ]; then \
+        . /$PACKAGE_NAME/deps_ws/install/setup.sh && \
+        colcon build; \
+    elif [ -e /opt/ros/${ROS_DISTRO}/setup.sh ]; then \
+        . /opt/ros/${ROS_DISTRO}/setup.sh && \
+        colcon build; \
+    fi 
 
-WORKDIR /build
+RUN sed --in-place \
+      's|^source .*|source "/'$PACKAGE_NAME'/main_ws/install/setup.bash"|' \
+      /$PACKAGE_NAME/entrypoint.sh && \  
+        chmod +x /$PACKAGE_NAME/entrypoint.sh
 
-COPY . .
-
-RUN params="-m $(realpath .) " \
-    && [ ! "${BUILD_NUMBER}" = "" ] && params="$params -b ${BUILD_NUMBER}" || : \
-    && [ ! "${COMMIT_ID}" = "" ] && params="$params -c ${COMMIT_ID}" || : \
-    && [ ! "${GIT_VER}" = "" ] && params="$params -g ${GIT_VER}" || : \
-    && ./packaging/common/package.sh $params
-
-FROM scratch
-COPY --from=fog-sw-builder /ros-*-navigation_*.deb /packages/
+ENV PACKAGE_NAME $PACKAGE_NAME
+WORKDIR /$PACKAGE_NAME
+ENTRYPOINT "/"$PACKAGE_NAME"/entrypoint.sh"

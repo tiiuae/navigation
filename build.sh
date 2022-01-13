@@ -4,19 +4,37 @@ set -euxo pipefail
 
 output_dir=$1
 
+git_commit_hash=${2:-$(git rev-parse HEAD)}
+
+git_version_string=${3:-$(git log --date=format:%Y%m%d --pretty=~git%cd.%h -n 1)}
+
 build_number=${GITHUB_RUN_NUMBER:=0}
 
-iname=navigation
-docker build \
-  --build-arg COMMIT_ID="$(git rev-parse HEAD)" \
-  --build-arg GIT_VER="$(git log --date=format:%Y%m%d --pretty=~git%cd.%h -n 1)" \
-  --build-arg BUILD_NUMBER="${build_number}" -t "${iname}" .
+ros_distro=${ROS_DISTRO:=foxy}
 
-container_id=$(docker create "${iname}" "")
-docker cp "${container_id}":/packages .
-docker rm "${container_id}"
-mkdir -p "$output_dir"
-cp packages/*.deb "$output_dir"
-rm -Rf packages
+iname=${PACKAGE_NAME:=navigation}
+
+iversion=${PACKAGE_VERSION:=latest}
+
+docker build \
+  --build-arg UID=$(id -u) \
+  --build-arg GID=$(id -g) \
+  --build-arg ROS_DISTRO=${ros_distro} \
+  --build-arg PACKAGE_NAME=${iname} \
+  --pull \
+  -f Dockerfile.build_env -t "${iname}_build:${iversion}" .
+
+docker run \
+  --rm \
+  -v $(pwd):/${iname}/sources \
+  ${iname}_build:${iversion} \
+  ./packaging/package.sh \
+  -b ${build_number} \
+  -g ${git_commit_hash} \
+  -v ${git_version_string}
+
+mkdir -p ${output_dir}
+cp *.deb *.ddeb ${output_dir}
+rm -Rf *.deb *.ddeb
 
 exit 0
