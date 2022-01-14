@@ -1,7 +1,6 @@
 // clang: MatousFormat
 
 // change the default Eigen formatting for prettier printing (has to be done before including Eigen)
-#include <fog_msgs/msg/detail/control_interface_diagnostics__struct.hpp>
 #define EIGEN_DEFAULT_IO_FORMAT Eigen::IOFormat(Eigen::StreamPrecision, Eigen::DontAlignCols, ", ", "\n", "[", "]")
 
 /* includes //{ */
@@ -11,6 +10,7 @@
 #include <fog_msgs/msg/future_trajectory.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <px4_msgs/msg/vehicle_local_position_setpoint.hpp>
 #include <deque>
 #include <future>
 #include <mutex>
@@ -54,6 +54,7 @@ namespace navigation
   using vec4_t = Eigen::Vector4d;
   using quat_t = Eigen::Quaterniond;
   using anax_t = Eigen::AngleAxisd;
+  using control_diag_msg_t = fog_msgs::msg::ControlInterfaceDiagnostics;
 
   /* helper functions //{ */
   
@@ -119,6 +120,8 @@ namespace navigation
     std::atomic_bool getting_control_diagnostics_ = false;
     std::atomic_bool control_moving_ = false;
     std::atomic_bool goal_reached_ = false;
+    std::atomic<uint8_t> control_vehicle_state_;
+    std::atomic<uint8_t> control_mission_state_;
 
     // other stuff received through callbacks
     std::string parent_frame_;
@@ -220,7 +223,7 @@ namespace navigation
     // subscribers
     rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr octomap_subscriber_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscriber_;
-    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr cmd_pose_subscriber_;
+    rclcpp::Subscription<px4_msgs::msg::VehicleLocalPositionSetpoint>::SharedPtr cmd_pose_subscriber_;
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr goto_subscriber_;
     rclcpp::Subscription<fog_msgs::msg::ControlInterfaceDiagnostics>::SharedPtr control_diagnostics_subscriber_;
     rclcpp::Subscription<fog_msgs::msg::ObstacleSectors>::SharedPtr bumper_subscriber_;
@@ -228,7 +231,7 @@ namespace navigation
     // subscriber callbacks
     void octomapCallback(const octomap_msgs::msg::Octomap::UniquePtr msg);
     void odometryCallback(const nav_msgs::msg::Odometry::UniquePtr msg);
-    void cmdPoseCallback(const geometry_msgs::msg::PoseStamped::UniquePtr msg);
+    void cmdPoseCallback(const px4_msgs::msg::VehicleLocalPositionSetpoint::UniquePtr msg);
     void controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfaceDiagnostics::UniquePtr msg);
     void bumperCallback(const fog_msgs::msg::ObstacleSectors::UniquePtr msg);
 
@@ -361,8 +364,7 @@ namespace navigation
 
     // subscribers
     odometry_subscriber_ = create_subscription<nav_msgs::msg::Odometry>("~/odometry_in", 1, std::bind(&Navigation::odometryCallback, this, _1));
-    cmd_pose_subscriber_ =
-        create_subscription<geometry_msgs::msg::PoseStamped>("~/cmd_pose_in", 1, std::bind(&Navigation::cmdPoseCallback, this, _1));
+    cmd_pose_subscriber_ = create_subscription<px4_msgs::msg::VehicleLocalPositionSetpoint>("~/cmd_pose_in", 1, std::bind(&Navigation::cmdPoseCallback, this, _1));
     goto_subscriber_ = create_subscription<nav_msgs::msg::Path>("~/goto_in", 1, std::bind(&Navigation::pathCallback, this, _1));
     control_diagnostics_subscriber_ = create_subscription<fog_msgs::msg::ControlInterfaceDiagnostics>(
         "~/control_diagnostics_in", 1, std::bind(&Navigation::controlDiagnosticsCallback, this, _1));
@@ -439,19 +441,22 @@ namespace navigation
   //}
 
   /* cmdPoseCallback //{ */
-  void Navigation::cmdPoseCallback(const geometry_msgs::msg::PoseStamped::UniquePtr msg)
+  void Navigation::cmdPoseCallback(const px4_msgs::msg::VehicleLocalPositionSetpoint::UniquePtr msg)
   {
     if (!is_initialized_)
-    {
       return;
-    }
+
+    // ignore invalid messages
+    if (std::isnan(msg->x) || std::isnan(msg->y) || std::isnan(msg->z) || std::isnan(msg->yaw))
+      return;
 
     getting_cmd_pose_ = true;
     RCLCPP_INFO_ONCE(get_logger(), "Getting cmd pose");
-    cmd_pose_.x() = msg->pose.position.x;
-    cmd_pose_.y() = msg->pose.position.y;
-    cmd_pose_.z() = msg->pose.position.z;
-    cmd_pose_.w() = getYaw(msg->pose.orientation);
+    // convert from NED (north-east-down) coordinates to ENU (east-north-up)
+    cmd_pose_.x() = msg->y;
+    cmd_pose_.y() = msg->x;
+    cmd_pose_.z() = -msg->z;
+    cmd_pose_.w() = msg->yaw;
   }
   //}
 
@@ -622,6 +627,14 @@ namespace navigation
   {
     std::scoped_lock lock(state_mutex_, waypoints_mutex_);
 
+    if (state_ == nav_state_t::not_initialized)
+    {
+      response->message = "Waypoint rejected: node is not initialized";
+      response->success = false;
+      RCLCPP_ERROR_STREAM(get_logger(), response->message);
+      return true;
+    }
+
     const vec4_t point(request->goal.at(0), request->goal.at(1), request->goal.at(2), request->goal.at(3));
     const std::vector<vec4_t> path = {point};
     std::string reason;
@@ -650,7 +663,7 @@ namespace navigation
 
     if (state_ == nav_state_t::not_initialized)
     {
-      response->message = "Path rejected: node is not initialized";
+      response->message = "Waypoint rejected: node is not initialized";
       response->success = false;
       RCLCPP_ERROR_STREAM(get_logger(), response->message);
       return true;
@@ -816,7 +829,7 @@ namespace navigation
       return;
   
     // common checks for all states except unitialized
-    if (control_vehicle_state_ == fog_msgs::msg::ControlInterfaceDiagnostics::VEHICLE_MANUAL_FLIGHT)
+    if (state_ != nav_state_t::idle && control_vehicle_state_ == control_diag_msg_t::VEHICLE_MANUAL_FLIGHT)
     {
       RCLCPP_INFO(get_logger(), "Manual control enabled. Clearing waypoints and switching to idle");
       waypoints_in_.clear();
@@ -852,7 +865,12 @@ namespace navigation
   void Navigation::state_navigation_not_initialized()
   {
     state_str_ = "not initialized";
-    if (is_initialized_ && getting_octomap_ && getting_control_diagnostics_ && getting_odometry_ && getting_cmd_pose_)
+    if (is_initialized_
+     && getting_octomap_
+     && getting_control_diagnostics_
+     && getting_odometry_
+     && getting_cmd_pose_
+     && control_vehicle_state_ == control_diag_msg_t::VEHICLE_AUTONOMOUS_FLIGHT)
     {
       state_ = nav_state_t::idle;
       RCLCPP_INFO(get_logger(), "Navigation is now ready! Switching state to idle.");
@@ -864,6 +882,7 @@ namespace navigation
       add_reason_if("missing control diagnostics", !getting_control_diagnostics_, reasons);
       add_reason_if("missing odometry", !getting_odometry_, reasons);
       add_reason_if("missing cmd pose", !getting_cmd_pose_, reasons);
+      add_reason_if("vehicle not in autonomous mode", control_vehicle_state_ != control_diag_msg_t::VEHICLE_AUTONOMOUS_FLIGHT, reasons);
       RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1000, "Not initialized: " << reasons);
     }
   }
@@ -977,13 +996,15 @@ namespace navigation
       // not sure if this can even happen - ROS2 documentation on this is empty...
       if (resp_ptr == nullptr)
       {
-        RCLCPP_WARN(get_logger(), "Failed to call local path service of control interface!");
+        RCLCPP_WARN(get_logger(), "Failed to call local path service of control interface! Deleting waypoints and switching state to idle.");
+        hover();
         state_ = nav_state_t::idle;
       }
       // this may happen, but we can't do much - control interface is probably not ready or something
       else if (!resp_ptr->success)
       {
-        RCLCPP_WARN_STREAM(get_logger(), "Failed to set local path to control interface: " << resp_ptr->message);
+        RCLCPP_WARN_STREAM(get_logger(), "Failed to set local path to control interface! Deleting waypoints and switching state to idle. Reason: " << resp_ptr->message);
+        hover();
         state_ = nav_state_t::idle;
       }
       // otherwise, all went well and the vehicle should be moving by this point
@@ -1002,16 +1023,8 @@ namespace navigation
     std::scoped_lock lock(waypoints_mutex_);
     state_str_ = "moving";
 
-    if (manual_control_)
-    {
-      RCLCPP_INFO(get_logger(), "Manual control enabled, switching to idle");
-      waypoints_in_.clear();
-      state_ = nav_state_t::idle;
-      return;
-    }
-
     replanning_counter_ = 0;
-    if (control_mission_state_ == fog_msgs::msg::ControlInterfaceDiagnostics::MISSION_FINISHED)
+    if (control_mission_state_ == control_diag_msg_t::MISSION_FINISHED)
     {
       RCLCPP_INFO(get_logger(), "End of current segment reached, switching to planning");
       state_ = nav_state_t::planning;
@@ -1025,14 +1038,6 @@ namespace navigation
     std::scoped_lock lock(waypoints_mutex_, bumper_mutex_);
     state_str_ = "avoiding";
 
-    if (manual_control_)
-    {
-      RCLCPP_INFO(get_logger(), "Manual control enabled, switching to idle");
-      waypoints_in_.clear();
-      state_ = nav_state_t::idle;
-      return;
-    }
-  
     const vec3_t avoidance_vector = bumperGetAvoidanceVector(*bumper_msg_);
     if (avoidance_vector.norm() == 0)
     {
@@ -1350,7 +1355,7 @@ namespace navigation
   /* publishDiagnostics //{ */
   void Navigation::publishDiagnostics()
   {
-    std::scoped_lock lock(state_mutex_, waypoints_mutex_, bumper_mutex_);
+    std::scoped_lock lock(waypoints_mutex_, bumper_mutex_);
 
     fog_msgs::msg::NavigationDiagnostics msg;
     msg.header.stamp = get_clock()->now();

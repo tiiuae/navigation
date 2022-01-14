@@ -16,6 +16,7 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(px4_msgs REQUIRED)
 find_package(fog_msgs 0.0.8 REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -49,6 +50,7 @@ ament_target_dependencies(navigation
   rclcpp_components
   std_msgs
   std_srvs
+  px4_msgs
   fog_msgs
   nav_msgs
   geometry_msgs
