@@ -9,6 +9,9 @@ on:
 jobs:
   tii-deb-build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ros2_distro: [foxy, galactic]
     steps:
 
       - name: Checkout navigation
@@ -16,20 +19,17 @@ jobs:
         with:
           path: navigation
 
-      - name: Checkout ci-scripts
-        uses: actions/checkout@v2
-        with:
-          repository: tiiuae/fogsw-ci-scripts
-          path: fogsw-ci-scripts
-
       # Run docker build
-      - name: Run fog-core docker build
+      - name: Run navigation docker build
+        env:
+          ROS: 1
+          ROS_DISTRO: ${{ matrix.ros2_distro }}
+          PACKAGE_NAME: navigation
         run: |
           set -eux
           mkdir bin
-          pushd fogsw-ci-scripts
-          export ROS=1
-          ./generate_deb.sh ../navigation ../bin/
+          pushd navigation
+          ./build.sh ../bin/
           popd
 
       - name: Install jfrog CLI tool
@@ -58,7 +58,7 @@ jobs:
           set -exu
           jfrog rt c import "$ARTIFACTORY_TOKEN"
           jfrog rt ping
-          pkg=$(find bin -name 'ros-foxy-navigation*.deb')
+          pkg=$(find bin -name 'ros-${{ matrix.ros2_distro }}-navigation*.deb')
           jfrog rt u --deb "$DISTRIBUTION/$COMPONENT/$ARCHITECTURE" \
                      --target-props COMMIT="$GITHUB_SHA" \
                      --build-name "$BUILD_NAME" \
