@@ -17,7 +17,7 @@ def generate_launch_description():
     ld.add_action(launch.actions.DeclareLaunchArgument("debug", default_value="false"))
     dbg_sub = None
     if sys.stdout.isatty():
-        dbg_sub = [launch.substitutions.PythonExpression(['"" if "false" == "', launch.substitutions.LaunchConfiguration("debug"), '" else "debug_ros2launch ' + os.ttyname(sys.stdout.fileno()) + '"']), 'stdbuf -o L']
+        dbg_sub = launch.substitutions.PythonExpression(['"" if "false" == "', launch.substitutions.LaunchConfiguration("debug"), '" else "debug_ros2launch ' + os.ttyname(sys.stdout.fileno()) + '"'])
 
 
     DRONE_DEVICE_ID=os.getenv('DRONE_DEVICE_ID')

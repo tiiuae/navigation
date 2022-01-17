@@ -478,10 +478,8 @@ namespace navigation
       return;
     }
 
-    const double yaw = getYaw(msg->pose.orientation);
-    // convert from NED (north-east-down) coordinates to ENU (east-north-up)
-    const vec4_t enu_cmd_pose(msg->pose.position.y, msg->pose.position.x, -msg->pose.position.z, yaw);
-    set_mutexed(cmd_pose_mutex_, std::make_tuple(enu_cmd_pose, true), std::forward_as_tuple(cmd_pose_, getting_cmd_pose_));
+    const vec4_t cmd_pose(msg->pose.position.x, msg->pose.position.y, msg->pose.position.z, getYaw(msg->pose.orientation));
+    set_mutexed(cmd_pose_mutex_, std::make_tuple(cmd_pose, true), std::forward_as_tuple(cmd_pose_, getting_cmd_pose_));
     RCLCPP_INFO_ONCE(get_logger(), "Getting cmd pose");
   }
   //}
