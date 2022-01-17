@@ -1,6 +1,7 @@
 // clang: MatousFormat
 
 // change the default Eigen formatting for prettier printing (has to be done before including Eigen)
+#include <limits>
 #include <tuple>
 #define EIGEN_DEFAULT_IO_FORMAT Eigen::IOFormat(Eigen::StreamPrecision, Eigen::DontAlignCols, ", ", "\n", "[", "]")
 
@@ -50,6 +51,7 @@
 
 using namespace std::placeholders;
 using namespace mrs_lib;
+constexpr double nand = std::numeric_limits<double>::quiet_NaN();
 
 namespace navigation
 {
@@ -135,12 +137,7 @@ namespace navigation
     std::string octree_frame_;
     std::shared_ptr<octomap::OcTree> octree_;
 
-    bool is_initialized_ = false;
-
-    // loaded parameters
-    bool visualize_planner_ = true;
-    bool show_unoccupied_ = false;
-    bool override_previous_commands_ = false;
+    std::atomic<bool> is_initialized_ = false;
 
     // bumper-related variables
     std::mutex bumper_mutex_;
@@ -156,11 +153,11 @@ namespace navigation
       moving,
       avoiding
     } state_ = nav_state_t::not_initialized;
-    std::string state_str_;
 
     std::mutex waypoints_mutex_;
     std::deque<vec4_t> waypoints_in_;
-    size_t current_waypoint_id_ = 0;
+    size_t waypoint_current_it_ = 0;
+    vec4_t waypoint_current_ = vec4_t(nand, nand, nand, nand);
     enum waypoint_state_t
     {
       empty = 0,
@@ -168,10 +165,7 @@ namespace navigation
       reached,
       unreachable
     } waypoint_state_ = waypoint_state_t::empty;
-
-    // planning-related variables
     int replanning_counter_ = 0;
-    vec4_t current_goal_;
 
     rclcpp::TimerBase::SharedPtr execution_timer_;
     void navigationRoutine();
@@ -207,6 +201,9 @@ namespace navigation
     bool bumper_enabled_;
 
     // visualization params
+    bool visualize_planner_ = true;
+    bool show_unoccupied_ = false;
+    bool override_previous_commands_ = false;
     double tree_points_scale_;
     double expansions_points_scale_;
     double path_points_scale_;
@@ -471,7 +468,10 @@ namespace navigation
 
     // ignore invalid messages
     if (std::isnan(msg->x) || std::isnan(msg->y) || std::isnan(msg->z) || std::isnan(msg->yaw))
+    {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Received cmd pose contains NaNs, ignoring: [%.2f, %.2f, %.2f, %.2f]!", msg->x, msg->y, msg->z, msg->yaw);
       return;
+    }
 
     // convert from NED (north-east-down) coordinates to ENU (east-north-up)
     const vec4_t enu_cmd_pose(msg->y, msg->x, -msg->z, msg->yaw);
@@ -509,16 +509,17 @@ namespace navigation
   template<typename T>
   bool Navigation::addWaypoints(const T& path, const bool override, std::string& fail_reason_out)
   {
-    if (state_ != nav_state_t::idle)
+    const auto state = get_mutexed(state_mutex_, state_);
+    if (state != nav_state_t::idle)
     {
-      if (override && state_ != nav_state_t::not_initialized)
+      if (override && state != nav_state_t::not_initialized)
       {
         RCLCPP_INFO(get_logger(), "Overriding previous navigation commands");
         hover(); // clears previous waypoints and commands the drone to the cmd_pose_, which should stop it
       }
       else
       {
-        fail_reason_out = "not idle! Current state is: " + state_str_;
+        fail_reason_out = "not idle! Current state is: " + to_string(state);
         return false;
       }
     }
@@ -558,13 +559,13 @@ namespace navigation
   /* pathCallback //{ */
   void Navigation::pathCallback(const nav_msgs::msg::Path::UniquePtr msg)
   {
-    std::scoped_lock lock(state_mutex_, waypoints_mutex_);
     if (msg->poses.empty())
     {
       RCLCPP_ERROR(get_logger(), "Path rejected: input does not contain any waypoints");
       return;
     }
 
+    std::scoped_lock lock(waypoints_mutex_);
     std::string reason;
     if (!addWaypoints(msg->poses, override_previous_commands_, reason))
     {
@@ -580,8 +581,6 @@ namespace navigation
   bool Navigation::localPathCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Path::Request> request,
                                      std::shared_ptr<fog_msgs::srv::Path::Response> response)
   {
-    std::scoped_lock lock(state_mutex_, waypoints_mutex_);
-
     if (request->path.poses.empty())
     {
       response->message = "Path rejected: path input does not contain any waypoints";
@@ -590,6 +589,7 @@ namespace navigation
       return true;
     }
 
+    std::scoped_lock lock(waypoints_mutex_);
     std::string reason;
     if (!addWaypoints(request->path.poses, override_previous_commands_, reason))
     {
@@ -610,9 +610,9 @@ namespace navigation
   bool Navigation::gpsPathCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Path::Request> request,
                                    std::shared_ptr<fog_msgs::srv::Path::Response> response)
   {
-    std::scoped_lock lock(state_mutex_);
+    const auto state = get_mutexed(state_mutex_, state_);
 
-    if (state_ == nav_state_t::not_initialized)
+    if (state == nav_state_t::not_initialized)
     {
       response->message = "Path rejected: node is not initialized";
       response->success = false;
@@ -643,9 +643,9 @@ namespace navigation
   bool Navigation::localWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Vec4::Request> request,
                                          std::shared_ptr<fog_msgs::srv::Vec4::Response> response)
   {
-    std::scoped_lock lock(state_mutex_, waypoints_mutex_);
+    const auto state = get_mutexed(state_mutex_, state_);
 
-    if (state_ == nav_state_t::not_initialized)
+    if (state == nav_state_t::not_initialized)
     {
       response->message = "Waypoint rejected: node is not initialized";
       response->success = false;
@@ -655,6 +655,8 @@ namespace navigation
 
     const vec4_t point(request->goal.at(0), request->goal.at(1), request->goal.at(2), request->goal.at(3));
     const std::vector<vec4_t> path = {point};
+
+    std::scoped_lock lock(waypoints_mutex_);
     std::string reason;
     if (!addWaypoints(path, override_previous_commands_, reason))
     {
@@ -677,9 +679,9 @@ namespace navigation
   bool Navigation::gpsWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Vec4::Request> request,
                                        std::shared_ptr<fog_msgs::srv::Vec4::Response> response)
   {
-    std::scoped_lock lock(state_mutex_);
+    const auto state = get_mutexed(state_mutex_, state_);
 
-    if (state_ == nav_state_t::not_initialized)
+    if (state == nav_state_t::not_initialized)
     {
       response->message = "Waypoint rejected: node is not initialized";
       response->success = false;
@@ -705,9 +707,9 @@ namespace navigation
   bool Navigation::hoverCallback([[maybe_unused]] const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                  std::shared_ptr<std_srvs::srv::Trigger::Response> response)
   {
-    std::scoped_lock lock(state_mutex_, waypoints_mutex_);
+    const auto state = get_mutexed(state_mutex_, state_);
 
-    if (state_ == nav_state_t::idle)
+    if (state == nav_state_t::idle)
     {
       response->message = "Hover not necessary, vehicle is already idle";
       response->success = false;
@@ -715,7 +717,7 @@ namespace navigation
       return true;
     }
 
-    if (state_ == nav_state_t::not_initialized)
+    if (state == nav_state_t::not_initialized)
     {
       response->message = "Hover not called, navigation is not initialized";
       response->success = false;
@@ -723,6 +725,7 @@ namespace navigation
       return true;
     }
 
+    std::scoped_lock lock(waypoints_mutex_);
     hover();
     response->message = "Navigation stopped. Hovering";
     response->success = true;
@@ -736,8 +739,6 @@ namespace navigation
   /* waypointFutureCallback //{ */
   void Navigation::waypointFutureCallback(rclcpp::Client<fog_msgs::srv::WaypointToLocal>::SharedFuture future)
   {
-    std::scoped_lock lock(waypoints_mutex_);
-
     const std::shared_ptr<fog_msgs::srv::WaypointToLocal_Response> result = future.get();
     if (result == nullptr)
     {
@@ -754,6 +755,7 @@ namespace navigation
     const vec4_t point(result->local_x, result->local_y, result->local_z, result->yaw);
     const std::vector<vec4_t> path = {point};
 
+    std::scoped_lock lock(waypoints_mutex_);
     std::string reasons;
     if (!addWaypoints(path, override_previous_commands_, reasons))
       RCLCPP_ERROR_STREAM(get_logger(), "Waypoint rejected: " << reasons);
@@ -765,8 +767,6 @@ namespace navigation
   /* pathFutureCallback //{ */
   void Navigation::pathFutureCallback(rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedFuture future)
   {
-    std::scoped_lock lock(waypoints_mutex_);
-
     const std::shared_ptr<fog_msgs::srv::PathToLocal_Response> result = future.get();
     if (result == nullptr)
     {
@@ -781,6 +781,7 @@ namespace navigation
 
     RCLCPP_INFO(get_logger(), "Coordinate transform returned %ld points", result->path.poses.size());
 
+    std::scoped_lock lock(waypoints_mutex_);
     std::string reasons;
     if (!addWaypoints(result->path.poses, override_previous_commands_, reasons))
       RCLCPP_ERROR_STREAM(get_logger(), "Path rejected: " << reasons);
@@ -827,7 +828,7 @@ namespace navigation
         break;
     }
 
-    RCLCPP_INFO_STREAM_THROTTLE(get_logger(), *get_clock(), 1000, "Navigation state: " << state_str_);
+    RCLCPP_INFO_STREAM_THROTTLE(get_logger(), *get_clock(), 1000, "Navigation state: " << to_string(state_));
 
     std_msgs::msg::String msg;
     msg.data = to_string(state_);
@@ -889,7 +890,6 @@ namespace navigation
     const bool getting_cmd_pose = get_mutexed(cmd_pose_mutex_, getting_cmd_pose_);
     const auto [control_vehicle_state, getting_control_diagnostics] = get_mutexed(diagnostics_mutex_, control_vehicle_state_, getting_control_diagnostics_);
 
-    state_str_ = "not initialized";
     if (is_initialized_
      && getting_octomap
      && getting_control_diagnostics
@@ -917,9 +917,8 @@ namespace navigation
   void Navigation::state_navigation_idle()
   {
     std::scoped_lock lock(waypoints_mutex_);
-    state_str_ = "idle";
 
-    if (!waypoints_in_.empty() && current_waypoint_id_ < waypoints_in_.size())
+    if (!waypoints_in_.empty() && waypoint_current_it_ < waypoints_in_.size())
     {
       RCLCPP_WARN(get_logger(), "New navigation goals available. Switching to planning");
       state_ = nav_state_t::planning;
@@ -931,7 +930,6 @@ namespace navigation
   void Navigation::state_navigation_planning()
   {
     std::scoped_lock lock(waypoints_mutex_);
-    state_str_ = "planning";
 
     /* initial checks //{ */
     
@@ -943,7 +941,7 @@ namespace navigation
       return;
     }
     
-    if (waypoints_in_.empty() || current_waypoint_id_ >= waypoints_in_.size())
+    if (waypoints_in_.empty() || waypoint_current_it_ >= waypoints_in_.size())
     {
       RCLCPP_INFO(get_logger(), "No more navigation goals available. Switching to idle");
       state_ = nav_state_t::idle;
@@ -953,10 +951,10 @@ namespace navigation
     //}
   
     // if we got here, let's plan!
-    const vec4_t goal = waypoints_in_.at(current_waypoint_id_);
-    current_goal_ = goal;
+    const vec4_t goal = waypoints_in_.at(waypoint_current_it_);
+    waypoint_current_ = goal;
   
-    RCLCPP_INFO_STREAM(get_logger(), "Waypoint " << goal.transpose() << " set as the next goal #" << current_waypoint_id_ << "/" << waypoints_in_.size() << ".");
+    RCLCPP_INFO_STREAM(get_logger(), "Waypoint " << goal.transpose() << " set as the next goal #" << waypoint_current_it_ << "/" << waypoints_in_.size() << ".");
   
     visualizeGoals(waypoints_in_);
 
@@ -972,7 +970,7 @@ namespace navigation
         replanning_counter_ = 0; // planning for this goal is done, reset the retry counter
         waypoint_state_ = waypoint_state_t::reached;
         // and it was the final goal that we've got
-        if (current_waypoint_id_ >= waypoints_in_.size())
+        if (waypoint_current_it_ >= waypoints_in_.size())
         {
           RCLCPP_INFO(get_logger(), "The last provided navigation goal has been visited. Switching to idle");
           state_ = nav_state_t::idle;
@@ -980,8 +978,8 @@ namespace navigation
         // if it was not the final goal, let's go to the next goal
         else
         {
-          RCLCPP_INFO(get_logger(), "Navigation goal #%lu/%lu visited, continuing.", current_waypoint_id_, waypoints_in_.size());
-          current_waypoint_id_++;
+          RCLCPP_INFO(get_logger(), "Navigation goal #%lu/%lu visited, continuing.", waypoint_current_it_, waypoints_in_.size());
+          waypoint_current_it_++;
         }
       }
       // the current goal is not reached, yet the path is empty. this means that the planning failed
@@ -1014,7 +1012,6 @@ namespace navigation
   /* state_navigation_commanding() method //{ */
   void Navigation::state_navigation_commanding()
   {
-    state_str_ = "commanding";
     if (future_ready(local_path_future_))
     {
       const auto resp_ptr = local_path_future_.get();
@@ -1046,7 +1043,6 @@ namespace navigation
   void Navigation::state_navigation_moving()
   {
     std::scoped_lock lock(waypoints_mutex_);
-    state_str_ = "moving";
     const uint8_t control_mission_state = get_mutexed(diagnostics_mutex_, control_mission_state_);
 
     replanning_counter_ = 0;
@@ -1062,7 +1058,6 @@ namespace navigation
   void Navigation::state_navigation_avoiding()
   {
     std::scoped_lock lock(waypoints_mutex_);
-    state_str_ = "avoiding";
 
     const auto bumper_msg = get_mutexed(bumper_mutex_, bumper_msg_);
     const vec3_t avoidance_vector = bumperGetAvoidanceVector(*bumper_msg);
@@ -1375,7 +1370,7 @@ namespace navigation
   void Navigation::hover()
   {
     waypoints_in_.clear();
-    current_waypoint_id_ = 0;
+    waypoint_current_it_ = 0;
     waypoint_state_ = waypoint_state_t::empty;
     const vec4_t cmd_pose = get_mutexed(cmd_pose_mutex_, cmd_pose_);
     startSendingWaypoints({cmd_pose});
@@ -1388,7 +1383,7 @@ namespace navigation
   /* publishDiagnostics //{ */
   void Navigation::publishDiagnostics()
   {
-    std::scoped_lock lock(waypoints_mutex_, bumper_mutex_);
+    std::scoped_lock lock(waypoints_mutex_);
 
     fog_msgs::msg::NavigationDiagnostics msg;
     msg.header.stamp = get_clock()->now();
@@ -1397,10 +1392,10 @@ namespace navigation
     msg.current_waypoint_status = to_string(waypoint_state_);
     msg.waypoints_in_buffer = waypoints_in_.size();
     msg.bumper_active = state_ == nav_state_t::avoiding;
-    msg.current_waypoint_id = current_waypoint_id_;
-    msg.current_nav_goal.at(0) = current_goal_.x();
-    msg.current_nav_goal.at(1) = current_goal_.y();
-    msg.current_nav_goal.at(2) = current_goal_.z();
+    msg.current_waypoint_id = waypoint_current_it_;
+    msg.current_nav_goal.at(0) = waypoint_current_.x();
+    msg.current_nav_goal.at(1) = waypoint_current_.y();
+    msg.current_nav_goal.at(2) = waypoint_current_.z();
     diagnostics_publisher_->publish(msg);
   }
   //}
@@ -1588,7 +1583,7 @@ namespace navigation
       const vec4_t w = waypoints[id];
       std_msgs::msg::ColorRGBA c;
 
-      if (id == current_waypoint_id_)
+      if (id == waypoint_current_it_)
       {
         c = generateColor(0.3, 0.5, 1.0, 1.0);
       } else
