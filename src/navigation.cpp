@@ -12,7 +12,6 @@
 #include <fog_msgs/msg/future_trajectory.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
-#include <px4_msgs/msg/vehicle_local_position_setpoint.hpp>
 #include <deque>
 #include <future>
 #include <mutex>
@@ -146,13 +145,13 @@ namespace navigation
     std::mutex state_mutex_;
     enum nav_state_t
     {
-      not_initialized,
+      not_ready,
       idle,
       planning,
       commanding,
       moving,
       avoiding
-    } state_ = nav_state_t::not_initialized;
+    } state_ = nav_state_t::not_ready;
 
     std::mutex waypoints_mutex_;
     std::deque<vec4_t> waypoints_in_;
@@ -171,7 +170,7 @@ namespace navigation
     void navigationRoutine();
 
     void state_navigation_common();
-    void state_navigation_not_initialized();
+    void state_navigation_not_ready();
     void state_navigation_idle();
     void state_navigation_planning();
     void state_navigation_commanding();
@@ -222,7 +221,7 @@ namespace navigation
     // subscribers
     rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr octomap_subscriber_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscriber_;
-    rclcpp::Subscription<px4_msgs::msg::VehicleLocalPositionSetpoint>::SharedPtr cmd_pose_subscriber_;
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr cmd_pose_subscriber_;
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr goto_subscriber_;
     rclcpp::Subscription<fog_msgs::msg::ControlInterfaceDiagnostics>::SharedPtr control_diagnostics_subscriber_;
     rclcpp::Subscription<fog_msgs::msg::ObstacleSectors>::SharedPtr bumper_subscriber_;
@@ -230,7 +229,7 @@ namespace navigation
     // subscriber callbacks
     void octomapCallback(const octomap_msgs::msg::Octomap::UniquePtr msg);
     void odometryCallback(const nav_msgs::msg::Odometry::UniquePtr msg);
-    void cmdPoseCallback(const px4_msgs::msg::VehicleLocalPositionSetpoint::UniquePtr msg);
+    void cmdPoseCallback(const geometry_msgs::msg::PoseStamped::UniquePtr msg);
     void controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfaceDiagnostics::UniquePtr msg);
     void bumperCallback(const fog_msgs::msg::ObstacleSectors::UniquePtr msg);
 
@@ -375,7 +374,7 @@ namespace navigation
         rclcpp::SystemDefaultsQoS(), std::bind(&Navigation::odometryCallback, this, _1), subopts);
 
     subopts.callback_group = new_cbk_grp();
-    cmd_pose_subscriber_ = create_subscription<px4_msgs::msg::VehicleLocalPositionSetpoint>("~/cmd_pose_in",
+    cmd_pose_subscriber_ = create_subscription<geometry_msgs::msg::PoseStamped>("~/cmd_pose_in",
         rclcpp::SystemDefaultsQoS(), std::bind(&Navigation::cmdPoseCallback, this, _1), subopts);
 
     subopts.callback_group = new_cbk_grp();
@@ -433,17 +432,16 @@ namespace navigation
   /* octomapCallback //{ */
   void Navigation::octomapCallback(const octomap_msgs::msg::Octomap::UniquePtr msg)
   {
-    RCLCPP_INFO_ONCE(get_logger(), "Getting octomap");
-
-    const auto treePtr = octomap_msgs::fullMsgToMap(*msg);
-
-    if (!treePtr)
+    const auto tree_ptr = octomap_msgs::fullMsgToMap(*msg);
+    if (tree_ptr)
+    {
+      const auto new_octree = std::shared_ptr<octomap::OcTree>(dynamic_cast<octomap::OcTree*>(tree_ptr));
+      set_mutexed(octree_mutex_, std::make_tuple(new_octree, true, msg->header.frame_id), std::forward_as_tuple(octree_, getting_octomap_, octree_frame_));
+      RCLCPP_INFO_ONCE(get_logger(), "Getting octomap");
+    }
+    else
     {
       RCLCPP_WARN(get_logger(), "Octomap message is empty!");
-    } else
-    {
-      const auto new_octree = std::shared_ptr<octomap::OcTree>(dynamic_cast<octomap::OcTree*>(treePtr));
-      set_mutexed(octree_mutex_, std::make_tuple(new_octree, true, msg->header.frame_id), std::forward_as_tuple(octree_, getting_octomap_, octree_frame_));
     }
   }
   //}
@@ -451,9 +449,6 @@ namespace navigation
   /* odometryCallback //{ */
   void Navigation::odometryCallback(const nav_msgs::msg::Odometry::UniquePtr msg)
   {
-    if (!is_initialized_)
-      return;
-
     const vec4_t uav_pose(msg->pose.pose.position.x, msg->pose.pose.position.y, msg->pose.pose.position.z, getYaw(msg->pose.pose.orientation));
     set_mutexed(uav_pose_mutex_, std::make_tuple(uav_pose, true), std::forward_as_tuple(uav_pose_, getting_uav_pose_));
     RCLCPP_INFO_ONCE(get_logger(), "Getting odometry");
@@ -461,20 +456,31 @@ namespace navigation
   //}
 
   /* cmdPoseCallback //{ */
-  void Navigation::cmdPoseCallback(const px4_msgs::msg::VehicleLocalPositionSetpoint::UniquePtr msg)
+  void Navigation::cmdPoseCallback(const geometry_msgs::msg::PoseStamped::UniquePtr msg)
   {
-    if (!is_initialized_)
-      return;
-
     // ignore invalid messages
-    if (std::isnan(msg->x) || std::isnan(msg->y) || std::isnan(msg->z) || std::isnan(msg->yaw))
+    if (std::isnan(msg->pose.position.x)
+     || std::isnan(msg->pose.position.y)
+     || std::isnan(msg->pose.position.z)
+     || std::isnan(msg->pose.orientation.x)
+     || std::isnan(msg->pose.orientation.y)
+     || std::isnan(msg->pose.orientation.z)
+     || std::isnan(msg->pose.orientation.w))
     {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Received cmd pose contains NaNs, ignoring: [%.2f, %.2f, %.2f, %.2f]!", msg->x, msg->y, msg->z, msg->yaw);
+      // only warn if we'd expect a valid message
+      const auto state = get_mutexed(state_mutex_, state_);
+      if (state != nav_state_t::not_ready)
+      {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Received cmd pose contains NaNs, ignoring! Position: [%.2f, %.2f, %.2f], orientation [%.2f, %.2f, %.2f, %.2f].",
+            msg->pose.position.x, msg->pose.position.y, msg->pose.position.z,
+            msg->pose.orientation.x, msg->pose.orientation.y, msg->pose.orientation.z, msg->pose.orientation.w);
+      }
       return;
     }
 
+    const double yaw = getYaw(msg->pose.orientation);
     // convert from NED (north-east-down) coordinates to ENU (east-north-up)
-    const vec4_t enu_cmd_pose(msg->y, msg->x, -msg->z, msg->yaw);
+    const vec4_t enu_cmd_pose(msg->pose.position.y, msg->pose.position.x, -msg->pose.position.z, yaw);
     set_mutexed(cmd_pose_mutex_, std::make_tuple(enu_cmd_pose, true), std::forward_as_tuple(cmd_pose_, getting_cmd_pose_));
     RCLCPP_INFO_ONCE(get_logger(), "Getting cmd pose");
   }
@@ -483,9 +489,6 @@ namespace navigation
   /* controlDiagnosticsCallback //{ */
   void Navigation::controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfaceDiagnostics::UniquePtr msg)
   {
-    if (!is_initialized_)
-      return;
-
     set_mutexed(diagnostics_mutex_, std::make_tuple(msg->vehicle_state, msg->mission_state, true), std::forward_as_tuple(control_vehicle_state_, control_mission_state_, getting_control_diagnostics_));
     RCLCPP_INFO_ONCE(get_logger(), "Getting control_interface diagnostics");
   }
@@ -494,9 +497,6 @@ namespace navigation
   /* bumperCallback //{ */
   void Navigation::bumperCallback(const fog_msgs::msg::ObstacleSectors::UniquePtr msg)
   {
-    if (!is_initialized_)
-      return;
-
     const auto bumper_msg = std::make_shared<fog_msgs::msg::ObstacleSectors>(*msg);
     set_mutexed(bumper_mutex_, bumper_msg, bumper_msg_);
     RCLCPP_INFO_ONCE(get_logger(), "Getting bumper msgs");
@@ -512,7 +512,7 @@ namespace navigation
     const auto state = get_mutexed(state_mutex_, state_);
     if (state != nav_state_t::idle)
     {
-      if (override && state != nav_state_t::not_initialized)
+      if (override && state != nav_state_t::not_ready)
       {
         RCLCPP_INFO(get_logger(), "Overriding previous navigation commands");
         hover(); // clears previous waypoints and commands the drone to the cmd_pose_, which should stop it
@@ -612,7 +612,7 @@ namespace navigation
   {
     const auto state = get_mutexed(state_mutex_, state_);
 
-    if (state == nav_state_t::not_initialized)
+    if (state == nav_state_t::not_ready)
     {
       response->message = "Path rejected: node is not initialized";
       response->success = false;
@@ -645,7 +645,7 @@ namespace navigation
   {
     const auto state = get_mutexed(state_mutex_, state_);
 
-    if (state == nav_state_t::not_initialized)
+    if (state == nav_state_t::not_ready)
     {
       response->message = "Waypoint rejected: node is not initialized";
       response->success = false;
@@ -681,7 +681,7 @@ namespace navigation
   {
     const auto state = get_mutexed(state_mutex_, state_);
 
-    if (state == nav_state_t::not_initialized)
+    if (state == nav_state_t::not_ready)
     {
       response->message = "Waypoint rejected: node is not initialized";
       response->success = false;
@@ -717,7 +717,7 @@ namespace navigation
       return true;
     }
 
-    if (state == nav_state_t::not_initialized)
+    if (state == nav_state_t::not_ready)
     {
       response->message = "Hover not called, navigation is not initialized";
       response->success = false;
@@ -803,8 +803,8 @@ namespace navigation
 
     switch (state_)
     {
-      case nav_state_t::not_initialized:
-        state_navigation_not_initialized();
+      case nav_state_t::not_ready:
+        state_navigation_not_ready();
         break;
 
       case nav_state_t::idle:
@@ -844,28 +844,29 @@ namespace navigation
   {
     std::scoped_lock lock(waypoints_mutex_);
 
-    if (state_ == nav_state_t::not_initialized)
+    if (state_ == nav_state_t::not_ready)
       return;
   
     // common checks for all states except unitialized
     const uint8_t control_vehicle_state = get_mutexed(diagnostics_mutex_, control_vehicle_state_);
-    if (state_ != nav_state_t::idle && control_vehicle_state == control_diag_msg_t::VEHICLE_MANUAL_FLIGHT)
+    if (control_vehicle_state != control_diag_msg_t::VEHICLE_AUTONOMOUS_FLIGHT)
     {
-      RCLCPP_INFO(get_logger(), "Manual control enabled. Clearing waypoints and switching to idle");
+      RCLCPP_INFO(get_logger(), "Vehicle no longer in autonomous flight. Clearing waypoints and switching to not_ready.");
       waypoints_in_.clear();
       waypoint_state_ = waypoint_state_t::empty;
-      state_ = nav_state_t::idle;
+      state_ = nav_state_t::not_ready;
       return;
     }
 
     const auto bumper_msg = get_mutexed(bumper_mutex_, bumper_msg_);
-    if (state_ != nav_state_t::idle && bumper_enabled_)
+    if (bumper_enabled_)
     {
-      if (bumper_msg == nullptr || nanosecondsToSecs((get_clock()->now() - bumper_msg->header.stamp).nanoseconds()) > 1.0)
+      const bool bumper_data_old = bumper_msg == nullptr || (get_clock()->now() - bumper_msg->header.stamp).seconds() > 1.0;
+      if (state_ != nav_state_t::idle && bumper_data_old)
       {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Missing bumper data calling hover.");
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Missing fresh bumper data calling hover and switching to idle.");
         hover();
-        state_ = nav_state_t::commanding;
+        state_ = nav_state_t::idle;
         return;
       }
 
@@ -874,7 +875,7 @@ namespace navigation
         const bool obstacle_detected = bumperCheckObstacles(*bumper_msg);
         if (obstacle_detected)
         {
-          RCLCPP_WARN(get_logger(), "Obstacle detected! Switching to avoiding");
+          RCLCPP_WARN(get_logger(), "Obstacle detected! Switching to avoiding.");
           state_ = nav_state_t::avoiding;
         }
       }
@@ -882,8 +883,8 @@ namespace navigation
   }
   //}
 
-  /* state_navigation_not_initialized() method //{ */
-  void Navigation::state_navigation_not_initialized()
+  /* state_navigation_not_ready() method //{ */
+  void Navigation::state_navigation_not_ready()
   {
     const bool getting_octomap = get_mutexed(octree_mutex_, getting_octomap_);
     const bool getting_uav_pose = get_mutexed(uav_pose_mutex_, getting_uav_pose_);
@@ -990,7 +991,9 @@ namespace navigation
         // check if the number of retries is too high
         if (replanning_counter_ >= replanning_limit_)
         {
-          RCLCPP_ERROR(get_logger(), "No path produced after %d repeated attempts. Please provide a new waypoint. Switching to idle.", replanning_counter_);
+          RCLCPP_ERROR(get_logger(), "No path produced after %d repeated attempts. Please provide a new waypoint. Clearing waypoints and switching to idle.", replanning_counter_);
+          waypoints_in_.clear();
+          waypoint_current_it_ = 0;
           replanning_counter_ = 0;
           state_ = nav_state_t::idle;
           waypoint_state_ = waypoint_state_t::unreachable;
@@ -1700,7 +1703,7 @@ bool Navigation::parse_param(const std::string& param_name, rclcpp::Duration& pa
   {
     switch (state)
     {
-      case nav_state_t::not_initialized: return "not_initialized";
+      case nav_state_t::not_ready: return "not_ready";
       case nav_state_t::idle: return "idle";
       case nav_state_t::planning: return "planning";
       case nav_state_t::commanding: return "commanding";

@@ -7,7 +7,6 @@
 
 #include <iostream>
 #include <mutex>
-#include <shared_mutex>
 #include <tuple>
 
 namespace mrs_lib
@@ -56,25 +55,6 @@ std::tuple<Args...> get_mutexed(std::mutex& mut, Args&... args) {
 }
 
 /**
- * @brief thread-safe getter for values of variables (args)
- *
- * @tparam Args types of the variables
- * @param mut mutex which protects the variables
- * @param args variables to obtain the values from
- *
- * @return std::tuple of the values
- */
-template <class... Args>
-std::tuple<Args...> get_mutexed(std::shared_mutex& mut, Args&... args) {
-
-  std::shared_lock lock(mut);
-
-  std::tuple result = std::tuple(args...);
-
-  return result;
-}
-
-/**
  * @brief thread-safe getter a value from a variable
  *
  * @tparam T type of the variable
@@ -87,23 +67,6 @@ template <class T>
 T get_mutexed(std::mutex& mut, T& arg) {
 
   std::scoped_lock lock(mut);
-
-  return arg;
-}
-
-/**
- * @brief thread-safe getter a value from a variable
- *
- * @tparam T type of the variable
- * @param mut mutex which protects the variable
- * @param arg variable to obtain the value from
- *
- * @return value of the variable
- */
-template <class T>
-T get_mutexed(std::shared_mutex& mut, T& arg) {
-
-  std::shared_lock lock(mut);
 
   return arg;
 }
