@@ -170,7 +170,6 @@ namespace navigation
     int replanning_counter_ = 0;
     vec4_t current_goal_;
 
-    rclcpp::CallbackGroup::SharedPtr callback_group_;
     rclcpp::TimerBase::SharedPtr execution_timer_;
     void navigationRoutine();
 
@@ -290,9 +289,13 @@ namespace navigation
 
     template <class T>
     bool parse_param(const std::string& param_name, T& param_dest);
+    bool parse_param(const std::string& param_name, rclcpp::Duration& param_dest);
 
     std::string to_string(const nav_state_t state) const;
     std::string to_string(const waypoint_state_t state) const;
+
+    std::vector<rclcpp::CallbackGroup::SharedPtr> callback_groups_;
+    rclcpp::CallbackGroup::SharedPtr new_cbk_grp();
   };
   //}
 
@@ -349,48 +352,72 @@ namespace navigation
     }
     //}
 
-    callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
-    auto sub_opt = rclcpp::SubscriptionOptions();
-    sub_opt.callback_group = callback_group_;
-
-    // publishers
-    binary_tree_publisher_ = create_publisher<visualization_msgs::msg::Marker>("~/binary_tree_markers_out", 1);
-    expansion_publisher_ = create_publisher<visualization_msgs::msg::Marker>("~/expansion_markers_out", 1);
-    path_publisher_ = create_publisher<visualization_msgs::msg::Marker>("~/path_markers_out", 1);
-    goal_publisher_ = create_publisher<visualization_msgs::msg::Marker>("~/goal_markers_out", 1);
+    // | ------------------ initialize publishers ----------------- |
+    rclcpp::QoS qos(rclcpp::KeepLast(3));
+    binary_tree_publisher_ = create_publisher<visualization_msgs::msg::Marker>("~/binary_tree_markers_out", qos);
+    expansion_publisher_ = create_publisher<visualization_msgs::msg::Marker>("~/expansion_markers_out", qos);
+    path_publisher_ = create_publisher<visualization_msgs::msg::Marker>("~/path_markers_out", qos);
+    goal_publisher_ = create_publisher<visualization_msgs::msg::Marker>("~/goal_markers_out", qos);
     status_publisher_ = create_publisher<std_msgs::msg::String>("~/status_out", 1);
-    future_trajectory_publisher_ = create_publisher<fog_msgs::msg::FutureTrajectory>("~/future_trajectory_out", 1);
-    diagnostics_publisher_ = create_publisher<fog_msgs::msg::NavigationDiagnostics>("~/diagnostics_out", 5);
+    future_trajectory_publisher_ = create_publisher<fog_msgs::msg::FutureTrajectory>("~/future_trajectory_out", qos);
+    diagnostics_publisher_ = create_publisher<fog_msgs::msg::NavigationDiagnostics>("~/diagnostics_out", qos);
 
-    // subscribers
-    odometry_subscriber_ = create_subscription<nav_msgs::msg::Odometry>("~/odometry_in", 1, std::bind(&Navigation::odometryCallback, this, _1));
-    cmd_pose_subscriber_ = create_subscription<px4_msgs::msg::VehicleLocalPositionSetpoint>("~/cmd_pose_in", 1, std::bind(&Navigation::cmdPoseCallback, this, _1));
-    goto_subscriber_ = create_subscription<nav_msgs::msg::Path>("~/goto_in", 1, std::bind(&Navigation::pathCallback, this, _1));
-    control_diagnostics_subscriber_ = create_subscription<fog_msgs::msg::ControlInterfaceDiagnostics>(
-        "~/control_diagnostics_in", 1, std::bind(&Navigation::controlDiagnosticsCallback, this, _1));
-    octomap_subscriber_ = create_subscription<octomap_msgs::msg::Octomap>("~/octomap_in", 1, std::bind(&Navigation::octomapCallback, this, _1), sub_opt);
-    bumper_subscriber_ = create_subscription<fog_msgs::msg::ObstacleSectors>("~/bumper_in", 1, std::bind(&Navigation::bumperCallback, this, _1), sub_opt);
-
-    // clients
+    // service clients
     local_path_client_ = create_client<fog_msgs::srv::Path>("~/local_path_out");
     waypoint_to_local_client_ = create_client<fog_msgs::srv::WaypointToLocal>("~/waypoint_to_local_out");
     path_to_local_client_ = create_client<fog_msgs::srv::PathToLocal>("~/path_to_local_out");
 
+    // | ------------------ initialize callbacks ------------------ |
+    rclcpp::SubscriptionOptions subopts;
+
+    subopts.callback_group = new_cbk_grp();
+    odometry_subscriber_ = create_subscription<nav_msgs::msg::Odometry>("~/odometry_in",
+        rclcpp::SystemDefaultsQoS(), std::bind(&Navigation::odometryCallback, this, _1), subopts);
+
+    subopts.callback_group = new_cbk_grp();
+    cmd_pose_subscriber_ = create_subscription<px4_msgs::msg::VehicleLocalPositionSetpoint>("~/cmd_pose_in",
+        rclcpp::SystemDefaultsQoS(), std::bind(&Navigation::cmdPoseCallback, this, _1), subopts);
+
+    subopts.callback_group = new_cbk_grp();
+    goto_subscriber_ = create_subscription<nav_msgs::msg::Path>("~/goto_in",
+        rclcpp::SystemDefaultsQoS(), std::bind(&Navigation::pathCallback, this, _1), subopts);
+
+    subopts.callback_group = new_cbk_grp();
+    control_diagnostics_subscriber_ = create_subscription<fog_msgs::msg::ControlInterfaceDiagnostics>("~/control_diagnostics_in",
+        rclcpp::SystemDefaultsQoS(), std::bind(&Navigation::controlDiagnosticsCallback, this, _1), subopts);
+
+    subopts.callback_group = new_cbk_grp();
+    octomap_subscriber_ = create_subscription<octomap_msgs::msg::Octomap>("~/octomap_in",
+        rclcpp::SystemDefaultsQoS(), std::bind(&Navigation::octomapCallback, this, _1), subopts);
+
+    subopts.callback_group = new_cbk_grp();
+    bumper_subscriber_ = create_subscription<fog_msgs::msg::ObstacleSectors>("~/bumper_in",
+        rclcpp::SystemDefaultsQoS(), std::bind(&Navigation::bumperCallback, this, _1), subopts);
+
     // service handlers
-    hover_service_ = create_service<std_srvs::srv::Trigger>("~/hover_in", std::bind(&Navigation::hoverCallback, this, _1, _2));
-    local_waypoint_service_ = create_service<fog_msgs::srv::Vec4>("~/local_waypoint_in", std::bind(&Navigation::localWaypointCallback, this, _1, _2));
-    local_path_service_ = create_service<fog_msgs::srv::Path>("~/local_path_in", std::bind(&Navigation::localPathCallback, this, _1, _2));
-    gps_waypoint_service_ = create_service<fog_msgs::srv::Vec4>("~/gps_waypoint_in", std::bind(&Navigation::gpsWaypointCallback, this, _1, _2));
-    gps_path_service_ = create_service<fog_msgs::srv::Path>("~/gps_path_in", std::bind(&Navigation::gpsPathCallback, this, _1, _2));
+    const auto qos_profile = qos.get_rmw_qos_profile();
+    const auto svc_grp_ptr = new_cbk_grp();
+    hover_service_ = create_service<std_srvs::srv::Trigger>("~/hover_in",
+        std::bind(&Navigation::hoverCallback, this, _1, _2), qos_profile, svc_grp_ptr);
+
+    local_waypoint_service_ = create_service<fog_msgs::srv::Vec4>("~/local_waypoint_in",
+        std::bind(&Navigation::localWaypointCallback, this, _1, _2), qos_profile, svc_grp_ptr);
+
+    local_path_service_ = create_service<fog_msgs::srv::Path>("~/local_path_in",
+        std::bind(&Navigation::localPathCallback, this, _1, _2), qos_profile, svc_grp_ptr);
+
+    gps_waypoint_service_ = create_service<fog_msgs::srv::Vec4>("~/gps_waypoint_in",
+        std::bind(&Navigation::gpsWaypointCallback, this, _1, _2), qos_profile, svc_grp_ptr);
+
+    gps_path_service_ = create_service<fog_msgs::srv::Path>("~/gps_path_in",
+        std::bind(&Navigation::gpsPathCallback, this, _1, _2), qos_profile, svc_grp_ptr);
 
     // timers
-    execution_timer_ =
-        create_wall_timer(std::chrono::duration<double>(1.0 / main_update_rate_), std::bind(&Navigation::navigationRoutine, this), callback_group_);
+    execution_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / main_update_rate_),
+        std::bind(&Navigation::navigationRoutine, this), new_cbk_grp());
 
     if (max_waypoint_distance_ <= 0)
-    {
       max_waypoint_distance_ = replanning_distance_;
-    }
 
     is_initialized_ = true;
     RCLCPP_INFO(get_logger(), "Initialized");
@@ -1588,22 +1615,49 @@ namespace navigation
 
   // | -------------------------- Utils ------------------------- |
 
-  /* parse_param //{ */
-  template <class T>
-  bool Navigation::parse_param(const std::string& param_name, T& param_dest)
+/* parse_param //{ */
+template <class T>
+bool Navigation::parse_param(const std::string &param_name, T &param_dest)
+{
+#ifdef ROS_FOXY
+  declare_parameter(param_name); // for Foxy
+#else
+  declare_parameter<T>(param_name); // for Galactic and newer
+#endif
+  if (!get_parameter(param_name, param_dest))
   {
-    declare_parameter<T>(param_name);
-    if (!get_parameter(param_name, param_dest))
-    {
-      RCLCPP_ERROR(get_logger(), "Could not load param '%s'", param_name.c_str());
-      return false;
-    } else
-    {
-      RCLCPP_INFO_STREAM(get_logger(), "Loaded '" << param_name << "' = '" << param_dest << "'");
-    }
-    return true;
+    RCLCPP_ERROR(get_logger(), "Could not load param '%s'", param_name.c_str());
+    return false;
   }
-  //}
+  else
+  {
+    RCLCPP_INFO_STREAM(get_logger(), "Loaded '" << param_name << "' = '" << param_dest << "'");
+  }
+  return true;
+}
+
+bool Navigation::parse_param(const std::string& param_name, rclcpp::Duration& param_dest)
+{
+  using T = double;
+#ifdef ROS_FOXY
+  declare_parameter(param_name); // for Foxy
+#else
+  declare_parameter<T>(param_name); // for Galactic and newer
+#endif
+  T tmp;
+  if (!get_parameter(param_name, tmp))
+  {
+    RCLCPP_ERROR(get_logger(), "Could not load param '%s'", param_name.c_str());
+    return false;
+  }
+  else
+  {
+    param_dest = rclcpp::Duration::from_seconds(tmp);
+    RCLCPP_INFO_STREAM(get_logger(), "Loaded '" << param_name << "' = '" << tmp << "s'");
+  }
+  return true;
+}
+//}
   
   /* future_ready //{ */
   // just a simple helper function
@@ -1665,6 +1719,16 @@ namespace navigation
     return "unknown";
   }
   //}
+
+/* new_cbk_grp() method //{ */
+// just a util function that returns a new mutually exclusive callback group to shorten the call
+rclcpp::CallbackGroup::SharedPtr Navigation::new_cbk_grp()
+{
+  const rclcpp::CallbackGroup::SharedPtr new_group = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  callback_groups_.push_back(new_group);
+  return new_group;
+}
+//}
 
 }  // namespace navigation
 #include <rclcpp_components/register_node_macro.hpp>
