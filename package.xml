@@ -14,10 +14,7 @@
 
   <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>
-  <depend>rclcpp_lifecycle</depend>
-  <depend>launch</depend>
   <depend>launch_ros</depend>
-  <depend>builtin_interfaces</depend>
 
   <depend>nav_msgs</depend>
   <depend>std_msgs</depend>
@@ -30,6 +27,7 @@
   <depend>octomap_msgs</depend>
   <depend>dynamicEDT3D</depend>
   <depend>fog_lib</depend>
+  <depend>control_interface</depend>
 
   <export>
     <build_type>ament_cmake</build_type>
