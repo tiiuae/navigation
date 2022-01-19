@@ -27,6 +27,7 @@ find_package(visualization_msgs REQUIRED)
 find_package(octomap REQUIRED)
 find_package(octomap_msgs REQUIRED)
 find_package(dynamicEDT3D REQUIRED)
+find_package(fog_lib REQUIRED)
 
 include_directories(
   include
@@ -61,6 +62,7 @@ ament_target_dependencies(navigation
   octomap
   octomap_msgs
   dynamicEDT3D
+  fog_lib
 )
 
 target_link_libraries(navigation ${OCTOMAP_LIBRARIES} ${DYNAMICEDT3D_LIBRARIES})

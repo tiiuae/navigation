@@ -1,8 +1,6 @@
 // clang: MatousFormat
 
 // change the default Eigen formatting for prettier printing (has to be done before including Eigen)
-#include <limits>
-#include <tuple>
 #define EIGEN_DEFAULT_IO_FORMAT Eigen::IOFormat(Eigen::StreamPrecision, Eigen::DontAlignCols, ", ", "\n", "[", "]")
 
 /* includes //{ */
@@ -21,7 +19,6 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <navigation/astar_planner.hpp>
-#include <navigation/mutex_utils.h>
 #include <octomap/OcTree.h>
 #include <octomap/OcTreeKey.h>
 #include <octomap/octomap.h>
@@ -45,11 +42,14 @@
 #include <fog_msgs/msg/obstacle_sectors.hpp>
 #include <fog_msgs/srv/waypoint_to_local.hpp>
 #include <fog_msgs/srv/path_to_local.hpp>
+#include <limits>
+#include <tuple>
+#include <fog_lib/mutex_utils.h>
 
 //}
 
 using namespace std::placeholders;
-using namespace mrs_lib;
+using namespace fog_lib;
 constexpr double nand = std::numeric_limits<double>::quiet_NaN();
 
 namespace navigation

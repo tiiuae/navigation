@@ -28,6 +28,7 @@
   <depend>octomap</depend>
   <depend>octomap_msgs</depend>
   <depend>dynamicEDT3D</depend>
+  <depend>fog_lib</depend>
 
   <export>
     <build_type>ament_cmake</build_type>
