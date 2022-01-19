@@ -1066,6 +1066,32 @@ namespace navigation
   {
     std::scoped_lock lock(waypoints_mutex_);
 
+    // if there is already a request sent, check if it was processed already
+    if (local_path_future_.valid())
+    {
+      if (future_ready(local_path_future_))
+      {
+        const auto resp_ptr = local_path_future_.get();
+        // not sure if this can even happen - ROS2 documentation on this is empty...
+        if (resp_ptr == nullptr)
+        {
+          RCLCPP_WARN(get_logger(), "Failed to call local path service of control interface! Deleting waypoints and switching state to idle.");
+          hover();
+          state_ = nav_state_t::idle;
+        }
+        // this may happen, but we can't do much - control interface is probably not ready or something
+        else if (!resp_ptr->success)
+        {
+          RCLCPP_WARN_STREAM(get_logger(), "Failed to set local path to control interface! Deleting waypoints and switching state to idle. Reason: " << resp_ptr->message);
+          hover();
+          state_ = nav_state_t::idle;
+        }
+      }
+      // if the previous service call is not processed yet, do nothing
+      else
+        return;
+    }
+
     const auto bumper_msg = get_mutexed(bumper_mutex_, bumper_msg_);
     const vec3_t avoidance_vector = bumperGetAvoidanceVector(*bumper_msg);
     if (avoidance_vector.norm() == 0)
