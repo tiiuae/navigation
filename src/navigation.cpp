@@ -44,6 +44,8 @@
 #include <fog_msgs/srv/path_to_local.hpp>
 #include <limits>
 #include <tuple>
+
+#include <control_interface/enums.h>
 #include <fog_lib/mutex_utils.h>
 
 //}
@@ -59,6 +61,8 @@ namespace navigation
   using quat_t = Eigen::Quaterniond;
   using anax_t = Eigen::AngleAxisd;
   using control_diag_msg_t = fog_msgs::msg::ControlInterfaceDiagnostics;
+  using vehicle_state_t = control_interface::vehicle_state_t;
+  using mission_state_t = control_interface::mission_state_t;
 
   /* helper functions //{ */
   
@@ -120,8 +124,8 @@ namespace navigation
     // flags set in callbacks
     std::mutex diagnostics_mutex_;
     bool getting_control_diagnostics_ = false;
-    uint8_t control_vehicle_state_;
-    uint8_t control_mission_state_;
+    vehicle_state_t control_vehicle_state_;
+    mission_state_t control_mission_state_;
 
     std::mutex uav_pose_mutex_;
     bool getting_uav_pose_ = false;
@@ -487,7 +491,9 @@ namespace navigation
   /* controlDiagnosticsCallback //{ */
   void Navigation::controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfaceDiagnostics::UniquePtr msg)
   {
-    set_mutexed(diagnostics_mutex_, std::make_tuple(msg->vehicle_state, msg->mission_state, true), std::forward_as_tuple(control_vehicle_state_, control_mission_state_, getting_control_diagnostics_));
+    const auto vehicle_state = control_interface::to_enum(msg->vehicle_state);
+    const auto mission_state = control_interface::to_enum(msg->mission_state);
+    set_mutexed(diagnostics_mutex_, std::make_tuple(vehicle_state, mission_state, true), std::forward_as_tuple(control_vehicle_state_, control_mission_state_, getting_control_diagnostics_));
     RCLCPP_INFO_ONCE(get_logger(), "Getting control_interface diagnostics");
   }
   //}
@@ -846,8 +852,8 @@ namespace navigation
       return;
   
     // common checks for all states except unitialized
-    const uint8_t control_vehicle_state = get_mutexed(diagnostics_mutex_, control_vehicle_state_);
-    if (control_vehicle_state != control_diag_msg_t::VEHICLE_AUTONOMOUS_FLIGHT)
+    const vehicle_state_t control_vehicle_state = get_mutexed(diagnostics_mutex_, control_vehicle_state_);
+    if (control_vehicle_state != vehicle_state_t::autonomous_flight)
     {
       RCLCPP_INFO(get_logger(), "Vehicle no longer in autonomous flight. Clearing waypoints and switching to not_ready.");
       waypoints_in_.clear();
@@ -894,7 +900,7 @@ namespace navigation
      && getting_control_diagnostics
      && getting_uav_pose
      && getting_cmd_pose
-     && control_vehicle_state == control_diag_msg_t::VEHICLE_AUTONOMOUS_FLIGHT)
+     && control_vehicle_state == vehicle_state_t::autonomous_flight)
     {
       state_ = nav_state_t::idle;
       RCLCPP_INFO(get_logger(), "Navigation is now ready! Switching state to idle.");
@@ -906,7 +912,7 @@ namespace navigation
       add_reason_if("missing control diagnostics", !getting_control_diagnostics, reasons);
       add_reason_if("missing uav pose", !getting_uav_pose, reasons);
       add_reason_if("missing cmd pose", !getting_cmd_pose, reasons);
-      add_reason_if("vehicle not in autonomous mode", control_vehicle_state != control_diag_msg_t::VEHICLE_AUTONOMOUS_FLIGHT, reasons);
+      add_reason_if("vehicle not in autonomous mode", control_vehicle_state != vehicle_state_t::autonomous_flight, reasons);
       RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1000, "Not initialized: " << reasons);
     }
   }
@@ -1044,10 +1050,10 @@ namespace navigation
   void Navigation::state_navigation_moving()
   {
     std::scoped_lock lock(waypoints_mutex_);
-    const uint8_t control_mission_state = get_mutexed(diagnostics_mutex_, control_mission_state_);
+    const mission_state_t control_mission_state = get_mutexed(diagnostics_mutex_, control_mission_state_);
 
     replanning_counter_ = 0;
-    if (control_mission_state == control_diag_msg_t::MISSION_FINISHED)
+    if (control_mission_state == mission_state_t::finished)
     {
       RCLCPP_INFO(get_logger(), "End of current segment reached, switching to planning");
       state_ = nav_state_t::planning;

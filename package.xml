@@ -6,6 +6,7 @@
   <version>0.0.8</version>
   <description>Provides collision free path-planning</description>
   <maintainer email="petr.stibinger@fly4future.com">stibipet</maintainer>
+  <maintainer email="matous.vrba@fly4future.com">Matouš Vrba</maintainer>
 
   <license>BSD 3-Clause</license>
 
