@@ -1056,6 +1056,7 @@ namespace navigation
     if (control_mission_state == mission_state_t::finished)
     {
       RCLCPP_INFO(get_logger(), "End of current segment reached, switching to planning");
+      waypoint_current_it_++;
       state_ = nav_state_t::planning;
     }
   }
