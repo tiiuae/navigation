@@ -1,4 +1,4 @@
 #!/bin/bash
 
 source /opt/ros/foxy/setup.bash
-ros2 launch odometry2 odometry_launch.py
+ros2 launch navigation navigation.py
