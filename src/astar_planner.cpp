@@ -540,8 +540,12 @@ std::pair<octomap::point3d, bool> AstarPlanner::generateTemporaryGoal(const octo
     temp_goal.y() = start.y();
     // temp_goal.z() = goal.z();  // scan new layers of octomap if needed
     
-    double alt_diff = pos_cmd.z() - start.z();  // odometry and desired altitude may differ
-    temp_goal.z()   = goal.z() + alt_diff;      // scan new layers of octomap in that case
+    double extra_motion = goal.z() - start.z();
+    extra_motion        = (extra_motion / std::abs(extra_motion)) * planning_tree_resolution;
+
+    // double alt_diff = pos_cmd.z() - start.z();  // odometry and desired altitude may differ
+
+    temp_goal.z()   = goal.z() + extra_motion;      // scan new layers of octomap in that case
 
     if (temp_goal.z() > max_altitude) {
       printf("[Astar]: capping at max altitude\n");
