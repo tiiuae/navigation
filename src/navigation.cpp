@@ -169,6 +169,8 @@ namespace navigation
       unreachable
     } waypoint_state_ = waypoint_state_t::empty;
     int replanning_counter_ = 0;
+    std::atomic<int> control_command_id_ = -1;
+    std::atomic<int> control_response_id_ = -1;
 
     rclcpp::TimerBase::SharedPtr execution_timer_;
     void navigationRoutine();
@@ -495,6 +497,7 @@ namespace navigation
     const auto mission_state = control_interface::to_enum(msg->mission_state);
     set_mutexed(diagnostics_mutex_, std::make_tuple(vehicle_state, mission_state, true), std::forward_as_tuple(control_vehicle_state_, control_mission_state_, getting_control_diagnostics_));
     RCLCPP_INFO_ONCE(get_logger(), "Getting control_interface diagnostics");
+    control_response_id_ = msg->control_response_id;
   }
   //}
 
@@ -1053,10 +1056,9 @@ namespace navigation
     const mission_state_t control_mission_state = get_mutexed(diagnostics_mutex_, control_mission_state_);
 
     replanning_counter_ = 0;
-    if (control_mission_state == mission_state_t::finished)
+    if (control_mission_state == mission_state_t::finished && control_command_id_ == control_response_id_)
     {
       RCLCPP_INFO(get_logger(), "End of current segment reached, switching to planning");
-      waypoint_current_it_++;
       state_ = nav_state_t::planning;
     }
   }
@@ -1381,6 +1383,7 @@ namespace navigation
     }
     auto path_srv = std::make_shared<fog_msgs::srv::Path::Request>();
     path_srv->path = msg;
+    path_srv->id = ++control_command_id_;
     return path_srv;
   }
   //}
