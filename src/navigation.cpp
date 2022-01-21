@@ -840,8 +840,10 @@ void Navigation::navigationRoutine(void) {
         last_goal_    = current_goal_;
         current_goal_ = waypoint_in_buffer_[current_waypoint_id_];
 
-        RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint [%.2f, %.2f, %.2f, %.2f] set as a next goal", this->get_name(), current_goal_[0], current_goal_[1],
-                    current_goal_[2], current_goal_[3]);
+        RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint [%.2f, %.2f, %.2f, %.2f] set as a next goal", this->get_name(), 
+                                          current_goal_[0], current_goal_[1], current_goal_[2], current_goal_[3]);
+        RCLCPP_INFO(this->get_logger(), "[%s]: Last received desired pose [%.2f, %.2f, %.2f, %.2f]", this->get_name(),
+                                          desired_pose_[0], desired_pose_[1], desired_pose_[2], desired_pose_[3]);            
 
         visualizeGoals(waypoint_in_buffer_);
 
@@ -871,8 +873,11 @@ void Navigation::navigationRoutine(void) {
             planner.findPath(planning_start, planning_goal, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
                              std::bind(&Navigation::visualizeExpansions, this, _1, _2, _3));
 
-        RCLCPP_INFO(this->get_logger(), "[%s]: Planner returned %ld waypoints", this->get_name(), waypoints.first.size());
+        RCLCPP_INFO(this->get_logger(), "[%s]: Planner returned %ld waypoints, before resampling:", this->get_name(), waypoints.first.size());
 
+        for (auto &w :waypoints.first) {
+          RCLCPP_INFO(this->get_logger(), "[%s]:        %.2f, %.2f, %.2f", this->get_name(), w.x(), w.y(), w.z());
+        }
         /* GOAL_REACHED //{ */
         if (waypoints.second == GOAL_REACHED) {
           RCLCPP_INFO(this->get_logger(), "[%s]: Current goal reached", this->get_name());
