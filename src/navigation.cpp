@@ -496,8 +496,8 @@ namespace navigation
     const auto vehicle_state = control_interface::to_enum(msg->vehicle_state);
     const auto mission_state = control_interface::to_enum(msg->mission_state);
     set_mutexed(control_diags_mutex_,
-        std::make_tuple(vehicle_state, mission_state, true, control_response_id_),
-        std::forward_as_tuple(control_vehicle_state_, control_mission_state_, getting_control_diagnostics_, msg->mission_id)
+        std::make_tuple(vehicle_state, mission_state, true, msg->mission_id),
+        std::forward_as_tuple(control_vehicle_state_, control_mission_state_, getting_control_diagnostics_, control_response_id_)
       );
     RCLCPP_INFO_ONCE(get_logger(), "Getting control_interface diagnostics");
   }
@@ -1058,10 +1058,15 @@ namespace navigation
     const auto [control_mission_state, command_id, response_id] = get_mutexed(control_diags_mutex_, control_mission_state_, control_command_id_, control_response_id_);
 
     replanning_counter_ = 0;
-    if (control_mission_state == mission_state_t::finished && response_id >= command_id)
+    if (control_mission_state == mission_state_t::finished)
     {
-      RCLCPP_INFO(get_logger(), "End of current segment reached, switching to planning");
-      state_ = nav_state_t::planning;
+      if (response_id == command_id)
+      {
+        RCLCPP_INFO_STREAM(get_logger(), "End of current segment reached (mission #" << command_id << "), switching to planning");
+        state_ = nav_state_t::planning;
+      }
+      /* else */
+      /*   RCLCPP_WARN_STREAM(get_logger(), "Different mission ended (" << response_id << ", expected " << command_id << "), ignoring"); */
     }
   }
   //}
@@ -1102,6 +1107,7 @@ namespace navigation
     const rclcpp::Time now = get_clock()->now();
     if (now - last_replan < bumper_min_replan_period_)
       return;
+    last_replan = get_clock()->now();
 
     const auto bumper_msg = get_mutexed(bumper_mutex_, bumper_msg_);
     const vec3_t avoidance_vector = bumperGetAvoidanceVector(*bumper_msg);
@@ -1405,12 +1411,12 @@ namespace navigation
   /* startSendingWaypoints() method //{ */
   void Navigation::startSendingWaypoints(const std::vector<vec4_t>& waypoints)
   {
-    RCLCPP_INFO(get_logger(), "Sending %ld waypoints to the control interface:", waypoints.size());
     for (const auto& w : waypoints)
       RCLCPP_INFO_STREAM(get_logger(), "       " << w.transpose());
     visualizePath(waypoints);
     publishFutureTrajectory(waypoints);
     const auto path_req = waypointsToPath(waypoints);
+    RCLCPP_INFO_STREAM(get_logger(), "Sending mission #" << path_req->mission_id << " with " << waypoints.size() << " waypoints to the control interface:");
     local_path_future_ = local_path_client_->async_send_request(path_req);
   }
   //}

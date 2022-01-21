@@ -10,6 +10,8 @@ add_definitions("-Wextra")
 add_definitions("-Wpedantic")
 add_definitions("-g")
 add_definitions("-O3")
+# add_definitions(-fsanitize=address,undefined,alignment,bounds)
+# add_link_options(-fsanitize=address,undefined,alignment,bounds)
 if ("$ENV{ROS_DISTRO}" STREQUAL "foxy") # to select the correct version of declare_parameter() and avoid errors/warnings
   add_definitions("-DROS_FOXY")
 endif()

@@ -2,12 +2,14 @@ import launch
 from ament_index_python.packages import get_package_share_directory
 from launch_ros.actions import Node
 from launch_ros.actions import ComposableNodeContainer
+from launch.actions import SetEnvironmentVariable
 from launch_ros.descriptions import ComposableNode
 import os
 import sys
 
 def generate_launch_description():
 
+    # ld = launch.LaunchDescription([SetEnvironmentVariable("LD_PRELOAD", "/usr/lib/x86_64-linux-gnu/libasan.so.5")])
     ld = launch.LaunchDescription()
 
     pkg_name = "navigation"
