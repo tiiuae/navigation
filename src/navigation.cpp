@@ -47,6 +47,7 @@
 
 #include <control_interface/enums.h>
 #include <fog_lib/mutex_utils.h>
+#include <fog_lib/params.h>
 
 //}
 
@@ -122,10 +123,12 @@ namespace navigation
 
   private:
     // flags set in callbacks
-    std::mutex diagnostics_mutex_;
+    std::mutex control_diags_mutex_;
     bool getting_control_diagnostics_ = false;
     vehicle_state_t control_vehicle_state_;
     mission_state_t control_mission_state_;
+    uint32_t control_command_id_ = 0;
+    uint32_t control_response_id_ = 0;
 
     std::mutex uav_pose_mutex_;
     bool getting_uav_pose_ = false;
@@ -169,8 +172,6 @@ namespace navigation
       unreachable
     } waypoint_state_ = waypoint_state_t::empty;
     int replanning_counter_ = 0;
-    std::atomic<int> control_command_id_ = -1;
-    std::atomic<int> control_response_id_ = -1;
 
     rclcpp::TimerBase::SharedPtr execution_timer_;
     void navigationRoutine();
@@ -188,7 +189,6 @@ namespace navigation
     // params
     double euclidean_distance_cutoff_;
     double safe_obstacle_distance_;
-    double bumper_distance_factor_;
     double navigation_tolerance_;
     bool unknown_is_occupied_;
     double min_altitude_;
@@ -203,7 +203,10 @@ namespace navigation
     int replanning_limit_;
     double replanning_distance_;
     double main_update_rate_;
+
     bool bumper_enabled_;
+    double bumper_distance_factor_;
+    rclcpp::Duration bumper_min_replan_period_ = rclcpp::Duration(std::chrono::milliseconds(500));
 
     // visualization params
     bool visualize_planner_ = true;
@@ -292,10 +295,6 @@ namespace navigation
 
     std_msgs::msg::ColorRGBA generateColor(const double r, const double g, const double b, const double a);
 
-    template <class T>
-    bool parse_param(const std::string& param_name, T& param_dest);
-    bool parse_param(const std::string& param_name, rclcpp::Duration& param_dest);
-
     std::string to_string(const nav_state_t state) const;
     std::string to_string(const waypoint_state_t state) const;
 
@@ -320,33 +319,34 @@ namespace navigation
     /* parse params from config file //{ */
     RCLCPP_INFO(get_logger(), "-------------- Loading parameters --------------");
     bool loaded_successfully = true;
-    loaded_successfully &= parse_param("planning.euclidean_distance_cutoff", euclidean_distance_cutoff_);
-    loaded_successfully &= parse_param("planning.safe_obstacle_distance", safe_obstacle_distance_);
-    loaded_successfully &= parse_param("planning.bumper_distance_factor", bumper_distance_factor_);
-    loaded_successfully &= parse_param("planning.unknown_is_occupied", unknown_is_occupied_);
-    loaded_successfully &= parse_param("planning.navigation_tolerance", navigation_tolerance_);
-    loaded_successfully &= parse_param("planning.min_altitude", min_altitude_);
-    loaded_successfully &= parse_param("planning.max_altitude", max_altitude_);
-    loaded_successfully &= parse_param("planning.max_goal_distance", max_goal_distance_);
-    loaded_successfully &= parse_param("planning.distance_penalty", distance_penalty_);
-    loaded_successfully &= parse_param("planning.greedy_penalty", greedy_penalty_);
-    loaded_successfully &= parse_param("planning.planning_tree_resolution", planning_tree_resolution_);
-    loaded_successfully &= parse_param("planning.max_waypoint_distance", max_waypoint_distance_);
-    loaded_successfully &= parse_param("planning.max_yaw_step", max_yaw_step_);
-    loaded_successfully &= parse_param("planning.planning_timeout", planning_timeout_);
-    loaded_successfully &= parse_param("planning.replanning_limit", replanning_limit_);
-    loaded_successfully &= parse_param("planning.replanning_distance", replanning_distance_);
-    loaded_successfully &= parse_param("planning.override_previous_commands", override_previous_commands_);
-    loaded_successfully &= parse_param("planning.main_update_rate", main_update_rate_);
+    loaded_successfully &= parse_param("planning.euclidean_distance_cutoff", euclidean_distance_cutoff_, *this);
+    loaded_successfully &= parse_param("planning.safe_obstacle_distance", safe_obstacle_distance_, *this);
+    loaded_successfully &= parse_param("planning.unknown_is_occupied", unknown_is_occupied_, *this);
+    loaded_successfully &= parse_param("planning.navigation_tolerance", navigation_tolerance_, *this);
+    loaded_successfully &= parse_param("planning.min_altitude", min_altitude_, *this);
+    loaded_successfully &= parse_param("planning.max_altitude", max_altitude_, *this);
+    loaded_successfully &= parse_param("planning.max_goal_distance", max_goal_distance_, *this);
+    loaded_successfully &= parse_param("planning.distance_penalty", distance_penalty_, *this);
+    loaded_successfully &= parse_param("planning.greedy_penalty", greedy_penalty_, *this);
+    loaded_successfully &= parse_param("planning.planning_tree_resolution", planning_tree_resolution_, *this);
+    loaded_successfully &= parse_param("planning.max_waypoint_distance", max_waypoint_distance_, *this);
+    loaded_successfully &= parse_param("planning.max_yaw_step", max_yaw_step_, *this);
+    loaded_successfully &= parse_param("planning.planning_timeout", planning_timeout_, *this);
+    loaded_successfully &= parse_param("planning.replanning_limit", replanning_limit_, *this);
+    loaded_successfully &= parse_param("planning.replanning_distance", replanning_distance_, *this);
+    loaded_successfully &= parse_param("planning.override_previous_commands", override_previous_commands_, *this);
+    loaded_successfully &= parse_param("planning.main_update_rate", main_update_rate_, *this);
 
-    loaded_successfully &= parse_param("visualization.visualize_planner", visualize_planner_);
-    loaded_successfully &= parse_param("visualization.show_unoccupied", show_unoccupied_);
-    loaded_successfully &= parse_param("visualization.tree_points_scale", tree_points_scale_);
-    loaded_successfully &= parse_param("visualization.expansions_points_scale", expansions_points_scale_);
-    loaded_successfully &= parse_param("visualization.path_points_scale", path_points_scale_);
-    loaded_successfully &= parse_param("visualization.goal_points_scale", goal_points_scale_);
+    loaded_successfully &= parse_param("visualization.visualize_planner", visualize_planner_, *this);
+    loaded_successfully &= parse_param("visualization.show_unoccupied", show_unoccupied_, *this);
+    loaded_successfully &= parse_param("visualization.tree_points_scale", tree_points_scale_, *this);
+    loaded_successfully &= parse_param("visualization.expansions_points_scale", expansions_points_scale_, *this);
+    loaded_successfully &= parse_param("visualization.path_points_scale", path_points_scale_, *this);
+    loaded_successfully &= parse_param("visualization.goal_points_scale", goal_points_scale_, *this);
 
-    loaded_successfully &= parse_param("bumper.enabled", bumper_enabled_);
+    loaded_successfully &= parse_param("bumper.enabled", bumper_enabled_, *this);
+    loaded_successfully &= parse_param("bumper.distance_factor", bumper_distance_factor_, *this);
+    loaded_successfully &= parse_param("bumper.min_replan_period", bumper_min_replan_period_, *this);
 
     if (!loaded_successfully)
     {
@@ -495,9 +495,11 @@ namespace navigation
   {
     const auto vehicle_state = control_interface::to_enum(msg->vehicle_state);
     const auto mission_state = control_interface::to_enum(msg->mission_state);
-    set_mutexed(diagnostics_mutex_, std::make_tuple(vehicle_state, mission_state, true), std::forward_as_tuple(control_vehicle_state_, control_mission_state_, getting_control_diagnostics_));
+    set_mutexed(control_diags_mutex_,
+        std::make_tuple(vehicle_state, mission_state, true, control_response_id_),
+        std::forward_as_tuple(control_vehicle_state_, control_mission_state_, getting_control_diagnostics_, msg->mission_id)
+      );
     RCLCPP_INFO_ONCE(get_logger(), "Getting control_interface diagnostics");
-    control_response_id_ = msg->control_response_id;
   }
   //}
 
@@ -855,7 +857,7 @@ namespace navigation
       return;
   
     // common checks for all states except unitialized
-    const vehicle_state_t control_vehicle_state = get_mutexed(diagnostics_mutex_, control_vehicle_state_);
+    const vehicle_state_t control_vehicle_state = get_mutexed(control_diags_mutex_, control_vehicle_state_);
     if (control_vehicle_state != vehicle_state_t::autonomous_flight)
     {
       RCLCPP_INFO(get_logger(), "Vehicle no longer in autonomous flight. Clearing waypoints and switching to not_ready.");
@@ -896,7 +898,7 @@ namespace navigation
     const bool getting_octomap = get_mutexed(octree_mutex_, getting_octomap_);
     const bool getting_uav_pose = get_mutexed(uav_pose_mutex_, getting_uav_pose_);
     const bool getting_cmd_pose = get_mutexed(cmd_pose_mutex_, getting_cmd_pose_);
-    const auto [control_vehicle_state, getting_control_diagnostics] = get_mutexed(diagnostics_mutex_, control_vehicle_state_, getting_control_diagnostics_);
+    const auto [control_vehicle_state, getting_control_diagnostics] = get_mutexed(control_diags_mutex_, control_vehicle_state_, getting_control_diagnostics_);
 
     if (is_initialized_
      && getting_octomap
@@ -1053,10 +1055,10 @@ namespace navigation
   void Navigation::state_navigation_moving()
   {
     std::scoped_lock lock(waypoints_mutex_);
-    const mission_state_t control_mission_state = get_mutexed(diagnostics_mutex_, control_mission_state_);
+    const auto [control_mission_state, command_id, response_id] = get_mutexed(control_diags_mutex_, control_mission_state_, control_command_id_, control_response_id_);
 
     replanning_counter_ = 0;
-    if (control_mission_state == mission_state_t::finished && control_command_id_ == control_response_id_)
+    if (control_mission_state == mission_state_t::finished && response_id >= command_id)
     {
       RCLCPP_INFO(get_logger(), "End of current segment reached, switching to planning");
       state_ = nav_state_t::planning;
@@ -1094,6 +1096,12 @@ namespace navigation
       else
         return;
     }
+
+    // only replan if at least bumper_min_replan_period_ duration has elapsed since the last replan
+    static rclcpp::Time last_replan = get_clock()->now() - bumper_min_replan_period_;
+    const rclcpp::Time now = get_clock()->now();
+    if (now - last_replan < bumper_min_replan_period_)
+      return;
 
     const auto bumper_msg = get_mutexed(bumper_mutex_, bumper_msg_);
     const vec3_t avoidance_vector = bumperGetAvoidanceVector(*bumper_msg);
@@ -1383,7 +1391,11 @@ namespace navigation
     }
     auto path_srv = std::make_shared<fog_msgs::srv::Path::Request>();
     path_srv->path = msg;
-    path_srv->id = ++control_command_id_;
+    // read and update the control_command_id_ atomically
+    {
+      std::scoped_lock lck(control_diags_mutex_);
+      path_srv->mission_id = ++control_command_id_;
+    }
     return path_srv;
   }
   //}
@@ -1655,50 +1667,6 @@ namespace navigation
 
   // | -------------------------- Utils ------------------------- |
 
-/* parse_param //{ */
-template <class T>
-bool Navigation::parse_param(const std::string &param_name, T &param_dest)
-{
-#ifdef ROS_FOXY
-  declare_parameter(param_name); // for Foxy
-#else
-  declare_parameter<T>(param_name); // for Galactic and newer
-#endif
-  if (!get_parameter(param_name, param_dest))
-  {
-    RCLCPP_ERROR(get_logger(), "Could not load param '%s'", param_name.c_str());
-    return false;
-  }
-  else
-  {
-    RCLCPP_INFO_STREAM(get_logger(), "Loaded '" << param_name << "' = '" << param_dest << "'");
-  }
-  return true;
-}
-
-bool Navigation::parse_param(const std::string& param_name, rclcpp::Duration& param_dest)
-{
-  using T = double;
-#ifdef ROS_FOXY
-  declare_parameter(param_name); // for Foxy
-#else
-  declare_parameter<T>(param_name); // for Galactic and newer
-#endif
-  T tmp;
-  if (!get_parameter(param_name, tmp))
-  {
-    RCLCPP_ERROR(get_logger(), "Could not load param '%s'", param_name.c_str());
-    return false;
-  }
-  else
-  {
-    param_dest = rclcpp::Duration::from_seconds(tmp);
-    RCLCPP_INFO_STREAM(get_logger(), "Loaded '" << param_name << "' = '" << tmp << "s'");
-  }
-  return true;
-}
-//}
-  
   /* future_ready //{ */
   // just a simple helper function
   template <typename T>

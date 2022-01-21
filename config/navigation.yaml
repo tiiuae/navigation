@@ -1,7 +1,6 @@
 planning:
   euclidean_distance_cutoff: 2.0 # [m]
   safe_obstacle_distance: 2.0 # [m]
-  bumper_distance_factor: 0.9 # virtual bumper will intervene at (safe_obstacle_distance * bumper_distance_factor)
   unknown_is_occupied: false
   navigation_tolerance: 0.4 # [m]
   min_altitude: 1.0 # [m]
@@ -28,3 +27,5 @@ visualization:
 
 bumper:
   enabled: true
+  distance_factor: 0.9 # virtual bumper will intervene at (safe_obstacle_distance * bumper_distance_factor)
+  min_replan_period: 0.5 # [s] avoidance won't be replanned with a shorter period than this
