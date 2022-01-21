@@ -70,7 +70,7 @@ AstarPlanner::AstarPlanner(double safe_obstacle_distance, double euclidean_dista
 /* findPath //{ */
 
 std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
-    const octomap::point3d &start_coord, const octomap::point3d &goal_coord, std::shared_ptr<octomap::OcTree> mapping_tree,
+    const octomap::point3d &start_coord, const octomap::point3d &goal_coord, const octomap::point3d &pos_cmd, std::shared_ptr<octomap::OcTree> mapping_tree,
     double timeout, std::function<void(const octomap::OcTree &)> visualizeTree,
     std::function<void(const std::unordered_set<Node, HashFunction> &, const std::unordered_set<Node, HashFunction> &, const octomap::OcTree &)>
         visualizeExpansions) {
@@ -103,7 +103,7 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
 
   if (map_query == NULL) {
     printf("[Astar]: Goal is outside of map\n");
-    auto temp_goal = generateTemporaryGoal(start_coord, goal_coord, tree);
+    auto temp_goal = generateTemporaryGoal(start_coord, goal_coord, pos_cmd, tree);
     printf("[Astar]: Generated a temporary goal: [%.2f, %.2f, %.2f]\n", temp_goal.first.x(), temp_goal.first.y(), temp_goal.first.z());
     if (temp_goal.second) {
       std::vector<octomap::point3d> vertical_path;
@@ -527,7 +527,7 @@ std::vector<octomap::point3d> AstarPlanner::prepareOutputPath(const std::vector<
 /* generateTemporaryGoal() //{ */
 
 std::pair<octomap::point3d, bool> AstarPlanner::generateTemporaryGoal(const octomap::point3d &start, const octomap::point3d &goal,
-                                                                      octomap::OcTree &tree) {
+                                                                      const octomap::point3d &pos_cmd,  octomap::OcTree &tree) {
 
   bool             vertical_priority = false;
   octomap::point3d temp_goal;
@@ -538,11 +538,10 @@ std::pair<octomap::point3d, bool> AstarPlanner::generateTemporaryGoal(const octo
     printf("[Astar]: give priority to vertical motion\n");
     temp_goal.x() = start.x();
     temp_goal.y() = start.y();
-    temp_goal.z() = goal.z();  // scan new layers of octomap if needed
-
-    // old
-    // double alt_diff = pos_cmd.z() - start.z();  // odometry and desired altitude may differ
-    // temp_goal.z()   = goal.z() + alt_diff;      // scan new layers of octomap in that case
+    // temp_goal.z() = goal.z();  // scan new layers of octomap if needed
+    
+    double alt_diff = pos_cmd.z() - start.z();  // odometry and desired altitude may differ
+    temp_goal.z()   = goal.z() + alt_diff;      // scan new layers of octomap in that case
 
     if (temp_goal.z() > max_altitude) {
       printf("[Astar]: capping at max altitude\n");

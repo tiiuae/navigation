@@ -861,7 +861,7 @@ void Navigation::navigationRoutine(void) {
                                      min_altitude_, max_altitude_, planning_timeout_, max_waypoint_distance_, unknown_is_occupied_);
 
         octomap::point3d planning_start = toPoint3d(uav_pos_);
-        //octomap::point3d pos_cmd        = toPoint3d(desired_pose_);
+        octomap::point3d pos_cmd        = toPoint3d(desired_pose_);
         /*if ((desired_pose_.head<3>() - uav_pos_.head<3>()).norm() <= navigation_tolerance_) {
           planning_start = toPoint3d(desired_pose_);
         } else {
@@ -870,7 +870,7 @@ void Navigation::navigationRoutine(void) {
         octomap::point3d planning_goal  = toPoint3d(current_goal_);
 
         std::pair<std::vector<octomap::point3d>, PlanningResult> waypoints =
-            planner.findPath(planning_start, planning_goal, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
+            planner.findPath(planning_start, planning_goal, pos_cmd, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
                              std::bind(&Navigation::visualizeExpansions, this, _1, _2, _3));
 
         RCLCPP_INFO(this->get_logger(), "[%s]: Planner returned %ld waypoints, before resampling:", this->get_name(), waypoints.first.size());
