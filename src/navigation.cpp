@@ -860,11 +860,11 @@ void Navigation::navigationRoutine(void) {
 
         octomap::point3d planning_start = toPoint3d(uav_pos_);
         //octomap::point3d pos_cmd        = toPoint3d(desired_pose_);
-        if ((desired_pose_.head<3>() - uav_pos_.head<3>()).norm() <= navigation_tolerance_) {
+        /*if ((desired_pose_.head<3>() - uav_pos_.head<3>()).norm() <= navigation_tolerance_) {
           planning_start = toPoint3d(desired_pose_);
         } else {
           planning_start = toPoint3d(uav_pos_);
-        }
+        }*/
         octomap::point3d planning_goal  = toPoint3d(current_goal_);
 
         std::pair<std::vector<octomap::point3d>, PlanningResult> waypoints =
