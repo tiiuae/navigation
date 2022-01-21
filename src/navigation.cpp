@@ -286,7 +286,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   current_waypoint_id_ = 0;
   bumper_msg_.reset();
 
-  callback_group_        = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+  callback_group_        = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   auto sub_opt           = rclcpp::SubscriptionOptions();
   sub_opt.callback_group = callback_group_;
 
