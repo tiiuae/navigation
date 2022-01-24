@@ -117,6 +117,7 @@ private:
   Eigen::Vector4d                  last_goal_;
   std::mutex                       octree_mutex_;
   std::mutex                       bumper_mutex_;
+  std::mutex                       control_diagnostics_mutex_;
   std::shared_ptr<octomap::OcTree> octree_;
   status_t                         status_ = IDLE;
   waypoint_status_t                waypoint_status_ = EMPTY;
@@ -150,6 +151,7 @@ private:
   double replanning_distance_;
   double main_update_rate_;
   bool   bumper_enabled_;
+  bool   diagnostics_received_ = false;
 
   // visualization params
   double tree_points_scale_;
@@ -387,6 +389,7 @@ void Navigation::desiredPoseCallback(const geometry_msgs::msg::PoseStamped::Uniq
 
 /* controlDiagnosticsCallback //{ */
 void Navigation::controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfaceDiagnostics::UniquePtr msg) {
+  std::scoped_lock lock(control_diagnostics_mutex_);
   if (!is_initialized_) {
     return;
   }
@@ -394,6 +397,7 @@ void Navigation::controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfac
   RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Getting control_interface diagnostics", this->get_name());
   control_moving_ = msg->moving;
   goal_reached_   = msg->mission_finished;
+  diagnostics_received_ = true;
 }
 //}
 
@@ -997,6 +1001,7 @@ void Navigation::navigationRoutine(void) {
         auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, false);
         auto call_result   = local_path_client_->async_send_request(waypoints_srv);
         status_            = MOVING;
+        diagnostics_received_ = false;
         break;
       }
         //}
@@ -1025,12 +1030,20 @@ void Navigation::navigationRoutine(void) {
 
         replanning_counter_ = 0;
         publishFutureTrajectory(waypoint_out_buffer_);
-        if ((!control_moving_ && goal_reached_)) {
-          RCLCPP_INFO(this->get_logger(), "[%s]: End of current segment reached", this->get_name());
-          if (bumper_active_) {
-            status_ = AVOIDING;
+        {
+          // Check if diagnostics received after commanding
+          std::scoped_lock lock(control_diagnostics_mutex_);
+          if (!diagnostics_received_){
+            RCLCPP_WARN(this->get_logger(), "[%s]: Control diagnostics not received after commanding, skipping loop", this->get_name());
           } else {
-            status_ = PLANNING;
+            if ((!control_moving_ && goal_reached_)) {
+              RCLCPP_INFO(this->get_logger(), "[%s]: End of current segment reached", this->get_name());
+              if (bumper_active_) {
+                status_ = AVOIDING;
+              } else {
+                status_ = PLANNING;
+              }
+            }
           }
         }
         break;
