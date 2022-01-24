@@ -1001,7 +1001,10 @@ void Navigation::navigationRoutine(void) {
         auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, false);
         auto call_result   = local_path_client_->async_send_request(waypoints_srv);
         status_            = MOVING;
-        diagnostics_received_ = false;
+        {
+          std::scoped_lock lock(control_diagnostics_mutex_);
+          diagnostics_received_ = false;
+        }
         break;
       }
         //}
