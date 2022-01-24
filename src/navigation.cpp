@@ -259,7 +259,7 @@ namespace navigation
     rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedPtr path_to_local_client_;
 
     template<typename T>
-    bool addWaypoints(const T& path, const bool override, std::string& fail_reason_out);
+    size_t addWaypoints(const T& path, const bool override, std::string& fail_reason_out);
     void pathCallback(const nav_msgs::msg::Path::UniquePtr msg);
 
     // service callbacks
@@ -516,9 +516,10 @@ namespace navigation
 
   /* addWaypoints() method //{ */
   template<typename T>
-  bool Navigation::addWaypoints(const T& path, const bool override, std::string& fail_reason_out)
+  size_t Navigation::addWaypoints(const T& path, const bool override, std::string& fail_reason_out)
   {
     const auto state = get_mutexed(state_mutex_, state_);
+    size_t added = 0;
     if (state != nav_state_t::idle)
     {
       if (override && state != nav_state_t::not_ready)
@@ -529,7 +530,7 @@ namespace navigation
       else
       {
         fail_reason_out = "not idle! Current state is: " + to_string(state);
-        return false;
+        return added;
       }
     }
 
@@ -559,9 +560,10 @@ namespace navigation
       }
 
       waypoints_in_.push_back(point);
+      added++;
     }
 
-    return true;
+    return added;
   }
   //}
 
@@ -576,13 +578,14 @@ namespace navigation
 
     std::scoped_lock lock(waypoints_mutex_);
     std::string reason;
-    if (!addWaypoints(msg->poses, override_previous_commands_, reason))
+    const size_t added = addWaypoints(msg->poses, override_previous_commands_, reason);
+    if (added == 0)
     {
       RCLCPP_ERROR_STREAM(get_logger(), "Path rejected: " << reason);
       return;
     }
 
-    RCLCPP_INFO(get_logger(), "Queued %ld new waypoints for planning.", msg->poses.size());
+    RCLCPP_INFO(get_logger(), "Queued %ld new waypoints for planning.", added);
   }
   //}
 
@@ -600,7 +603,8 @@ namespace navigation
 
     std::scoped_lock lock(waypoints_mutex_);
     std::string reason;
-    if (!addWaypoints(request->path.poses, override_previous_commands_, reason))
+    const size_t added = addWaypoints(request->path.poses, override_previous_commands_, reason);
+    if (added == 0)
     {
       response->message = "Path rejected: " + reason;
       response->success = false;
@@ -652,8 +656,15 @@ namespace navigation
   bool Navigation::localWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Vec4::Request> request,
                                          std::shared_ptr<fog_msgs::srv::Vec4::Response> response)
   {
-    const auto state = get_mutexed(state_mutex_, state_);
+    if (request->goal.size() != 4)
+    {
+      response->message = "The waypoint must have 4 coordinates (x, y, z, yaw)! Ignoring request.";
+      response->success = false;
+      RCLCPP_ERROR_STREAM(get_logger(), response->message);
+      return true;
+    }
 
+    const auto state = get_mutexed(state_mutex_, state_);
     if (state == nav_state_t::not_ready)
     {
       response->message = "Waypoint rejected: node is not initialized";
@@ -667,7 +678,8 @@ namespace navigation
 
     std::scoped_lock lock(waypoints_mutex_);
     std::string reason;
-    if (!addWaypoints(path, override_previous_commands_, reason))
+    const size_t added = addWaypoints(path, override_previous_commands_, reason);
+    if (added == 0)
     {
       response->message = "Waypoint rejected: " + reason;
       response->success = false;
@@ -688,8 +700,15 @@ namespace navigation
   bool Navigation::gpsWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Vec4::Request> request,
                                        std::shared_ptr<fog_msgs::srv::Vec4::Response> response)
   {
-    const auto state = get_mutexed(state_mutex_, state_);
+    if (request->goal.size() != 4)
+    {
+      response->message = "The waypoint must have 4 coordinates (x, y, z, yaw)! Ignoring request.";
+      response->success = false;
+      RCLCPP_ERROR_STREAM(get_logger(), response->message);
+      return true;
+    }
 
+    const auto state = get_mutexed(state_mutex_, state_);
     if (state == nav_state_t::not_ready)
     {
       response->message = "Waypoint rejected: node is not initialized";
@@ -765,9 +784,10 @@ namespace navigation
     const std::vector<vec4_t> path = {point};
 
     std::scoped_lock lock(waypoints_mutex_);
-    std::string reasons;
-    if (!addWaypoints(path, override_previous_commands_, reasons))
-      RCLCPP_ERROR_STREAM(get_logger(), "Waypoint rejected: " << reasons);
+    std::string reason;
+    const size_t added = addWaypoints(path, override_previous_commands_, reason);
+    if (added == 0)
+      RCLCPP_ERROR_STREAM(get_logger(), "Waypoint rejected: " << reason);
     else
       RCLCPP_INFO(get_logger(), "Waypoint added (LOCAL): %.2f, %.2f, %.2f, %.2f", point.x(), point.y(), point.z(), point.w());
   }
@@ -791,9 +811,10 @@ namespace navigation
     RCLCPP_INFO(get_logger(), "Coordinate transform returned %ld points", result->path.poses.size());
 
     std::scoped_lock lock(waypoints_mutex_);
-    std::string reasons;
-    if (!addWaypoints(result->path.poses, override_previous_commands_, reasons))
-      RCLCPP_ERROR_STREAM(get_logger(), "Path rejected: " << reasons);
+    std::string reason;
+    const size_t added = addWaypoints(result->path.poses, override_previous_commands_, reason);
+    if (added == 0)
+      RCLCPP_ERROR_STREAM(get_logger(), "Path rejected: " << reason);
     else
       RCLCPP_INFO_STREAM(get_logger(), "Queued " << result->path.poses.size() << " new waypoints for planning.");
   }
