@@ -117,6 +117,7 @@ private:
   Eigen::Vector4d                  last_goal_;
   std::mutex                       octree_mutex_;
   std::mutex                       bumper_mutex_;
+  std::mutex                       control_diagnostics_mutex_;
   std::shared_ptr<octomap::OcTree> octree_;
   status_t                         status_ = IDLE;
   waypoint_status_t                waypoint_status_ = EMPTY;
@@ -150,6 +151,7 @@ private:
   double replanning_distance_;
   double main_update_rate_;
   bool   bumper_enabled_;
+  bool   diagnostics_received_ = false;
 
   // visualization params
   double tree_points_scale_;
@@ -286,7 +288,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   current_waypoint_id_ = 0;
   bumper_msg_.reset();
 
-  callback_group_        = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+  callback_group_        = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   auto sub_opt           = rclcpp::SubscriptionOptions();
   sub_opt.callback_group = callback_group_;
 
@@ -387,6 +389,7 @@ void Navigation::desiredPoseCallback(const geometry_msgs::msg::PoseStamped::Uniq
 
 /* controlDiagnosticsCallback //{ */
 void Navigation::controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfaceDiagnostics::UniquePtr msg) {
+  std::scoped_lock lock(control_diagnostics_mutex_);
   if (!is_initialized_) {
     return;
   }
@@ -394,6 +397,7 @@ void Navigation::controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfac
   RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Getting control_interface diagnostics", this->get_name());
   control_moving_ = msg->moving;
   goal_reached_   = msg->mission_finished;
+  diagnostics_received_ = true;
 }
 //}
 
@@ -840,8 +844,10 @@ void Navigation::navigationRoutine(void) {
         last_goal_    = current_goal_;
         current_goal_ = waypoint_in_buffer_[current_waypoint_id_];
 
-        RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint [%.2f, %.2f, %.2f, %.2f] set as a next goal", this->get_name(), current_goal_[0], current_goal_[1],
-                    current_goal_[2], current_goal_[3]);
+        RCLCPP_INFO(this->get_logger(), "[%s]: Waypoint [%.2f, %.2f, %.2f, %.2f] set as a next goal", this->get_name(), 
+                                          current_goal_[0], current_goal_[1], current_goal_[2], current_goal_[3]);
+        RCLCPP_INFO(this->get_logger(), "[%s]: Last received desired pose [%.2f, %.2f, %.2f, %.2f]", this->get_name(),
+                                          desired_pose_[0], desired_pose_[1], desired_pose_[2], desired_pose_[3]);            
 
         visualizeGoals(waypoint_in_buffer_);
 
@@ -859,20 +865,23 @@ void Navigation::navigationRoutine(void) {
                                      min_altitude_, max_altitude_, planning_timeout_, max_waypoint_distance_, unknown_is_occupied_);
 
         octomap::point3d planning_start = toPoint3d(uav_pos_);
-        //octomap::point3d pos_cmd        = toPoint3d(desired_pose_);
-        if ((desired_pose_.head<3>() - uav_pos_.head<3>()).norm() <= navigation_tolerance_) {
+        octomap::point3d pos_cmd        = toPoint3d(desired_pose_);
+        /*if ((desired_pose_.head<3>() - uav_pos_.head<3>()).norm() <= navigation_tolerance_) {
           planning_start = toPoint3d(desired_pose_);
         } else {
           planning_start = toPoint3d(uav_pos_);
-        }
+        }*/
         octomap::point3d planning_goal  = toPoint3d(current_goal_);
 
         std::pair<std::vector<octomap::point3d>, PlanningResult> waypoints =
-            planner.findPath(planning_start, planning_goal, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
+            planner.findPath(planning_start, planning_goal, pos_cmd, octree_, planning_timeout_, std::bind(&Navigation::visualizeTree, this, _1),
                              std::bind(&Navigation::visualizeExpansions, this, _1, _2, _3));
 
-        RCLCPP_INFO(this->get_logger(), "[%s]: Planner returned %ld waypoints", this->get_name(), waypoints.first.size());
+        RCLCPP_INFO(this->get_logger(), "[%s]: Planner returned %ld waypoints, before resampling:", this->get_name(), waypoints.first.size());
 
+        for (auto &w :waypoints.first) {
+          RCLCPP_INFO(this->get_logger(), "[%s]:        %.2f, %.2f, %.2f", this->get_name(), w.x(), w.y(), w.z());
+        }
         /* GOAL_REACHED //{ */
         if (waypoints.second == GOAL_REACHED) {
           RCLCPP_INFO(this->get_logger(), "[%s]: Current goal reached", this->get_name());
@@ -992,6 +1001,10 @@ void Navigation::navigationRoutine(void) {
         auto waypoints_srv = waypointsToPathSrv(waypoint_out_buffer_, false);
         auto call_result   = local_path_client_->async_send_request(waypoints_srv);
         status_            = MOVING;
+        {
+          std::scoped_lock lock(control_diagnostics_mutex_);
+          diagnostics_received_ = false;
+        }
         break;
       }
         //}
@@ -1020,12 +1033,20 @@ void Navigation::navigationRoutine(void) {
 
         replanning_counter_ = 0;
         publishFutureTrajectory(waypoint_out_buffer_);
-        if ((!control_moving_ && goal_reached_)) {
-          RCLCPP_INFO(this->get_logger(), "[%s]: End of current segment reached", this->get_name());
-          if (bumper_active_) {
-            status_ = AVOIDING;
+        {
+          // Check if diagnostics received after commanding
+          std::scoped_lock lock(control_diagnostics_mutex_);
+          if (!diagnostics_received_){
+            RCLCPP_WARN(this->get_logger(), "[%s]: Control diagnostics not received after commanding, skipping loop", this->get_name());
           } else {
-            status_ = PLANNING;
+            if ((!control_moving_ && goal_reached_)) {
+              RCLCPP_INFO(this->get_logger(), "[%s]: End of current segment reached", this->get_name());
+              if (bumper_active_) {
+                status_ = AVOIDING;
+              } else {
+                status_ = PLANNING;
+              }
+            }
           }
         }
         break;
