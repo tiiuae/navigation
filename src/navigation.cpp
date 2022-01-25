@@ -518,18 +518,18 @@ namespace navigation
   template<typename T>
   size_t Navigation::addWaypoints(const T& path, const bool override, std::string& fail_reason_out)
   {
-    const auto state = get_mutexed(state_mutex_, state_);
+    std::scoped_lock lock(state_mutex_, waypoints_mutex_);
     size_t added = 0;
-    if (state != nav_state_t::idle)
+    if (state_ != nav_state_t::idle)
     {
-      if (override && state != nav_state_t::not_ready)
+      if (override && state_ != nav_state_t::not_ready)
       {
         RCLCPP_INFO(get_logger(), "Overriding previous navigation commands");
         hover(); // clears previous waypoints and commands the drone to the cmd_pose_, which should stop it
       }
       else
       {
-        fail_reason_out = "not idle! Current state is: " + to_string(state);
+        fail_reason_out = "not idle! Current state is: " + to_string(state_);
         return added;
       }
     }
@@ -576,7 +576,6 @@ namespace navigation
       return;
     }
 
-    std::scoped_lock lock(waypoints_mutex_);
     std::string reason;
     const size_t added = addWaypoints(msg->poses, override_previous_commands_, reason);
     if (added == 0)
@@ -601,7 +600,6 @@ namespace navigation
       return true;
     }
 
-    std::scoped_lock lock(waypoints_mutex_);
     std::string reason;
     const size_t added = addWaypoints(request->path.poses, override_previous_commands_, reason);
     if (added == 0)
@@ -676,7 +674,6 @@ namespace navigation
     const vec4_t point(request->goal.at(0), request->goal.at(1), request->goal.at(2), request->goal.at(3));
     const std::vector<vec4_t> path = {point};
 
-    std::scoped_lock lock(waypoints_mutex_);
     std::string reason;
     const size_t added = addWaypoints(path, override_previous_commands_, reason);
     if (added == 0)
@@ -783,7 +780,6 @@ namespace navigation
     const vec4_t point(result->local_x, result->local_y, result->local_z, result->yaw);
     const std::vector<vec4_t> path = {point};
 
-    std::scoped_lock lock(waypoints_mutex_);
     std::string reason;
     const size_t added = addWaypoints(path, override_previous_commands_, reason);
     if (added == 0)
@@ -810,7 +806,6 @@ namespace navigation
 
     RCLCPP_INFO(get_logger(), "Coordinate transform returned %ld points", result->path.poses.size());
 
-    std::scoped_lock lock(waypoints_mutex_);
     std::string reason;
     const size_t added = addWaypoints(result->path.poses, override_previous_commands_, reason);
     if (added == 0)
@@ -827,7 +822,7 @@ namespace navigation
   /* navigationRoutine //{ */
   void Navigation::navigationRoutine()
   {
-    std::scoped_lock lck(state_mutex_);
+    std::scoped_lock lck(state_mutex_, waypoints_mutex_);
 
     state_navigation_common();
 
@@ -872,8 +867,6 @@ namespace navigation
   /* state_navigation_common() method //{ */
   void Navigation::state_navigation_common()
   {
-    std::scoped_lock lock(waypoints_mutex_);
-
     if (state_ == nav_state_t::not_ready)
       return;
   
@@ -883,6 +876,7 @@ namespace navigation
     {
       RCLCPP_INFO(get_logger(), "Vehicle no longer in autonomous flight. Clearing waypoints and switching to not_ready.");
       waypoints_in_.clear();
+      waypoint_current_it_ = 0;
       waypoint_state_ = waypoint_state_t::empty;
       state_ = nav_state_t::not_ready;
       return;
@@ -947,8 +941,6 @@ namespace navigation
   /* state_navigation_idle() method //{ */
   void Navigation::state_navigation_idle()
   {
-    std::scoped_lock lock(waypoints_mutex_);
-
     if (!waypoints_in_.empty() && waypoint_current_it_ < waypoints_in_.size())
     {
       RCLCPP_WARN(get_logger(), "New navigation goals available. Switching to planning");
@@ -960,8 +952,6 @@ namespace navigation
   /* state_navigation_planning() method //{ */
   void Navigation::state_navigation_planning()
   {
-    std::scoped_lock lock(waypoints_mutex_);
-
     /* initial checks //{ */
     
     if (octree_ == nullptr || octree_->size() < 1)
@@ -990,10 +980,10 @@ namespace navigation
     visualizeGoals(waypoints_in_);
 
     // start the actual nav_state_t::planning
-    const auto [waypoints_out, goal_reached] = planPath(goal, octree_);
+    const auto [planned_path, goal_reached] = planPath(goal, octree_);
     // evaluate the result of path planning
     // if no path was found, check the cause
-    if (waypoints_out.empty())
+    if (planned_path.empty())
     {
       // the current goal is already reached!
       if (goal_reached)
@@ -1004,6 +994,8 @@ namespace navigation
         if (waypoint_current_it_ >= waypoints_in_.size())
         {
           RCLCPP_INFO(get_logger(), "The last provided navigation goal has been visited. Switching to idle");
+          waypoints_in_.clear();
+          waypoint_current_it_ = 0;
           state_ = nav_state_t::idle;
         }
         // if it was not the final goal, let's go to the next goal
@@ -1034,7 +1026,7 @@ namespace navigation
     else
     {
       replanning_counter_ = 0; // planning was successful, so reset the retry counter
-      startSendingWaypoints(waypoints_out); // start sending the waypoints to the command interface
+      startSendingWaypoints(planned_path); // start sending the waypoints to the command interface
       // change the state accordingly
       state_ = nav_state_t::commanding;
       waypoint_state_ = waypoint_state_t::ongoing;
@@ -1075,7 +1067,6 @@ namespace navigation
   /* state_navigation_moving() method //{ */
   void Navigation::state_navigation_moving()
   {
-    std::scoped_lock lock(waypoints_mutex_);
     const auto [control_mission_state, command_id, response_id] = get_mutexed(control_diags_mutex_, control_mission_state_, control_command_id_, control_response_id_);
 
     replanning_counter_ = 0;
@@ -1095,8 +1086,6 @@ namespace navigation
   /* state_navigation_avoiding() method //{ */
   void Navigation::state_navigation_avoiding()
   {
-    std::scoped_lock lock(waypoints_mutex_);
-
     // if there is already a request sent, check if it was processed already
     if (local_path_future_.valid())
     {
@@ -1262,13 +1251,13 @@ namespace navigation
     const std::vector<vec4_t> resampled = resamplePath(path, cmd_pose.w(), goal.w());
   
     // finally, start filling the buffer up to the maximal replanning distance
-    std::vector<vec4_t> waypoints_out;
-    waypoints_out.reserve(resampled.size()+1);
+    std::vector<vec4_t> planned_path;
+    planned_path.reserve(resampled.size()+1);
     for (const auto& w : resampled)
     {
       if ((w.head<3>() - cmd_pose.head<3>()).norm() <= replanning_distance_)
       {
-        waypoints_out.push_back(w);
+        planned_path.push_back(w);
       } else
       {
         RCLCPP_INFO(get_logger(), "Path exceeding replanning distance");
@@ -1278,9 +1267,9 @@ namespace navigation
     }
   
     if (append_goal)
-      waypoints_out.push_back(goal);
+      planned_path.push_back(goal);
   
-    return {waypoints_out, goal_reached};
+    return {planned_path, goal_reached};
   }
   //}
 
@@ -1459,8 +1448,6 @@ namespace navigation
   /* publishDiagnostics //{ */
   void Navigation::publishDiagnostics()
   {
-    std::scoped_lock lock(waypoints_mutex_);
-
     fog_msgs::msg::NavigationDiagnostics msg;
     msg.header.stamp = get_clock()->now();
     msg.header.frame_id = get_mutexed(octree_mutex_, octree_frame_);
