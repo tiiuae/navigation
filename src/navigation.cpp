@@ -13,6 +13,7 @@
 #include <deque>
 #include <future>
 #include <mutex>
+#include <shared_mutex>
 #include <octomap/math/Vector3.h>
 #include <sstream>
 #include <eigen3/Eigen/Dense>
@@ -123,22 +124,22 @@ namespace navigation
 
   private:
     // flags set in callbacks
-    std::mutex control_diags_mutex_;
+    std::shared_mutex control_diags_mutex_;
     bool getting_control_diagnostics_ = false;
     vehicle_state_t control_vehicle_state_;
     mission_state_t control_mission_state_;
     uint32_t control_command_id_ = 0;
     uint32_t control_response_id_ = 0;
 
-    std::mutex uav_pose_mutex_;
+    std::shared_mutex uav_pose_mutex_;
     bool getting_uav_pose_ = false;
     vec4_t uav_pose_;
 
-    std::mutex cmd_pose_mutex_;
+    std::shared_mutex cmd_pose_mutex_;
     bool getting_cmd_pose_ = false;
     vec4_t cmd_pose_;
 
-    std::mutex octree_mutex_;
+    std::shared_mutex octree_mutex_;
     bool getting_octomap_ = false;
     std::string octree_frame_;
     std::shared_ptr<octomap::OcTree> octree_;
@@ -146,10 +147,10 @@ namespace navigation
     std::atomic<bool> is_initialized_ = false;
 
     // bumper-related variables
-    std::mutex bumper_mutex_;
+    std::shared_mutex bumper_mutex_;
     std::shared_ptr<fog_msgs::msg::ObstacleSectors> bumper_msg_ = nullptr;
 
-    std::mutex state_mutex_;
+    std::shared_mutex state_mutex_;
     enum nav_state_t
     {
       not_ready,
@@ -515,6 +516,9 @@ namespace navigation
   // | -------------------- Command callbacks ------------------- |
 
   /* addWaypoints() method //{ */
+  // the caller must NOT lock the following muteces or else a deadlock may happen:
+  // state_mutex_
+  // waypoints_mutex_
   template<typename T>
   size_t Navigation::addWaypoints(const T& path, const bool override, std::string& fail_reason_out)
   {
@@ -750,7 +754,7 @@ namespace navigation
       return true;
     }
 
-    std::scoped_lock lock(waypoints_mutex_);
+    std::scoped_lock lock(state_mutex_, waypoints_mutex_);
     hover();
     response->message = "Navigation stopped. Hovering";
     response->success = true;
@@ -1219,7 +1223,7 @@ namespace navigation
             else
             {
               path_valid = false;
-              RCLCPP_WARN(get_logger(), "Found a path that is path too short.");
+              RCLCPP_WARN(get_logger(), "Found a path that is too short.");
             }
           }
         }
@@ -1432,6 +1436,9 @@ namespace navigation
   //}
 
   /* hover //{ */
+  // the caller must lock the following muteces:
+  // state_mutex_
+  // waypoints_mutex_
   void Navigation::hover()
   {
     waypoints_in_.clear();
