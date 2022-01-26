@@ -47,6 +47,7 @@
 #include <tuple>
 
 #include <control_interface/enums.h>
+#include <fog_lib/geometry/cyclic.h>
 #include <fog_lib/mutex_utils.h>
 #include <fog_lib/params.h>
 
@@ -54,6 +55,7 @@
 
 using namespace std::placeholders;
 using namespace fog_lib;
+using namespace fog_lib::geometry;
 constexpr double nand = std::numeric_limits<double>::quiet_NaN();
 
 namespace navigation
@@ -68,16 +70,21 @@ namespace navigation
 
   /* helper functions //{ */
   
-  double getYaw(const geometry_msgs::msg::Quaternion& q)
+  double quat2heading(const geometry_msgs::msg::Quaternion& q)
   {
-    return atan2(2.0 * (q.z * q.w + q.x * q.y), -1.0 + 2.0 * (q.w * q.w + q.x * q.x));
+    quat_t eq;
+    eq.x() = q.x;
+    eq.y() = q.y;
+    eq.z() = q.z;
+    eq.w() = q.w;
+    const vec3_t dir = eq*vec3_t::UnitX();
+    return std::atan2(dir.y(), dir.x());
   }
   
-  geometry_msgs::msg::Quaternion yawToQuaternionMsg(const double& yaw)
+  geometry_msgs::msg::Quaternion heading2quat(const double heading)
   {
+    const quat_t q(anax_t(heading, vec3_t::UnitZ()));
     geometry_msgs::msg::Quaternion msg;
-    quat_t q =
-        anax_t(0, vec3_t::UnitX()) * anax_t(0, vec3_t::UnitY()) * anax_t(yaw, vec3_t::UnitZ());
     msg.w = q.w();
     msg.x = q.x();
     msg.y = q.y();
@@ -97,6 +104,17 @@ namespace navigation
   double nanosecondsToSecs(const int64_t nanoseconds)
   {
     return nanoseconds / 1e9;
+  }
+
+  bool has_nans(const geometry_msgs::msg::Pose& pose)
+  {
+    return std::isnan(pose.position.x)
+     || std::isnan(pose.position.y)
+     || std::isnan(pose.position.z)
+     || std::isnan(pose.orientation.x)
+     || std::isnan(pose.orientation.y)
+     || std::isnan(pose.orientation.z)
+     || std::isnan(pose.orientation.w);
   }
 
   /* add_reason_if helper string function //{ */
@@ -456,7 +474,21 @@ namespace navigation
   /* odometryCallback //{ */
   void Navigation::odometryCallback(const nav_msgs::msg::Odometry::UniquePtr msg)
   {
-    const vec4_t uav_pose(msg->pose.pose.position.x, msg->pose.pose.position.y, msg->pose.pose.position.z, getYaw(msg->pose.pose.orientation));
+    // ignore invalid messages
+    if (has_nans(msg->pose.pose))
+    {
+      // only warn if we'd expect a valid message
+      const auto state = get_mutexed(state_mutex_, state_);
+      if (state != nav_state_t::not_ready)
+      {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Received uav pose contains NaNs, ignoring! Position: [%.2f, %.2f, %.2f], orientation [%.2f, %.2f, %.2f, %.2f].",
+            msg->pose.pose.position.x, msg->pose.pose.position.y, msg->pose.pose.position.z,
+            msg->pose.pose.orientation.x, msg->pose.pose.orientation.y, msg->pose.pose.orientation.z, msg->pose.pose.orientation.w);
+      }
+      return;
+    }
+
+    const vec4_t uav_pose(msg->pose.pose.position.x, msg->pose.pose.position.y, msg->pose.pose.position.z, quat2heading(msg->pose.pose.orientation));
     set_mutexed(uav_pose_mutex_, std::make_tuple(uav_pose, true), std::forward_as_tuple(uav_pose_, getting_uav_pose_));
     RCLCPP_INFO_ONCE(get_logger(), "Getting odometry");
   }
@@ -466,13 +498,7 @@ namespace navigation
   void Navigation::cmdPoseCallback(const geometry_msgs::msg::PoseStamped::UniquePtr msg)
   {
     // ignore invalid messages
-    if (std::isnan(msg->pose.position.x)
-     || std::isnan(msg->pose.position.y)
-     || std::isnan(msg->pose.position.z)
-     || std::isnan(msg->pose.orientation.x)
-     || std::isnan(msg->pose.orientation.y)
-     || std::isnan(msg->pose.orientation.z)
-     || std::isnan(msg->pose.orientation.w))
+    if (has_nans(msg->pose))
     {
       // only warn if we'd expect a valid message
       const auto state = get_mutexed(state_mutex_, state_);
@@ -485,7 +511,7 @@ namespace navigation
       return;
     }
 
-    const vec4_t cmd_pose(msg->pose.position.x, msg->pose.position.y, msg->pose.position.z, getYaw(msg->pose.orientation));
+    const vec4_t cmd_pose(msg->pose.position.x, msg->pose.position.y, msg->pose.position.z, quat2heading(msg->pose.orientation));
     set_mutexed(cmd_pose_mutex_, std::make_tuple(cmd_pose, true), std::forward_as_tuple(cmd_pose_, getting_cmd_pose_));
     RCLCPP_INFO_ONCE(get_logger(), "Getting cmd pose");
   }
@@ -722,7 +748,7 @@ namespace navigation
     waypoint_convert_req->latitude_deg = request->goal.at(0);
     waypoint_convert_req->longitude_deg = request->goal.at(1);
     waypoint_convert_req->relative_altitude_m = request->goal.at(2);
-    waypoint_convert_req->yaw = request->goal.at(3);
+    waypoint_convert_req->yaw = sradians::wrap(request->goal.at(3)); // ensure that the yaw is in the range [-pi, pi]
     waypoint_to_local_client_->async_send_request(waypoint_convert_req, std::bind(&Navigation::waypointFutureCallback, this, std::placeholders::_1));
 
     response->message = "Requesting transformation of waypoint from GPS to local coordinates";
@@ -781,7 +807,7 @@ namespace navigation
     }
 
     RCLCPP_INFO(get_logger(), "Coordinate transform returned: %.2f, %.2f", result->local_x, result->local_y);
-    const vec4_t point(result->local_x, result->local_y, result->local_z, result->yaw);
+    const vec4_t point(result->local_x, result->local_y, result->local_z, sradians::wrap(result->yaw)); // ensure that the yaw is in the range [-pi, pi]
     const std::vector<vec4_t> path = {point};
 
     std::string reason;
@@ -1406,7 +1432,7 @@ namespace navigation
       p.pose.position.x = waypoints[i].x();
       p.pose.position.y = waypoints[i].y();
       p.pose.position.z = waypoints[i].z();
-      p.pose.orientation = yawToQuaternionMsg(waypoints[i].w());
+      p.pose.orientation = heading2quat(waypoints[i].w());
       msg.poses.push_back(p);
     }
     auto path_srv = std::make_shared<fog_msgs::srv::Path::Request>();
@@ -1717,7 +1743,7 @@ namespace navigation
 
   vec4_t to_eigen(const geometry_msgs::msg::PoseStamped& pose)
   {
-    return {pose.pose.position.x, pose.pose.position.y, pose.pose.position.z, getYaw(pose.pose.orientation)};
+    return {pose.pose.position.x, pose.pose.position.y, pose.pose.position.z, quat2heading(pose.pose.orientation)};
   }
   //}
 
