@@ -47,9 +47,11 @@
 #include <tuple>
 
 #include <control_interface/enums.h>
-#include <fog_lib/geometry/cyclic.h>
 #include <fog_lib/mutex_utils.h>
 #include <fog_lib/params.h>
+#include <fog_lib/misc.h>
+#include <fog_lib/geometry/cyclic.h>
+#include <fog_lib/geometry/misc.h>
 
 //}
 
@@ -67,77 +69,6 @@ namespace navigation
   using control_diag_msg_t = fog_msgs::msg::ControlInterfaceDiagnostics;
   using vehicle_state_t = control_interface::vehicle_state_t;
   using mission_state_t = control_interface::mission_state_t;
-
-  /* helper functions //{ */
-  
-  // returns the heading, which is the counterclockwise angle of a projection of q's direction vector to the XY plane from the X axis
-  // the returned value is in range [-pi, pi]
-  double quat2heading(const geometry_msgs::msg::Quaternion& q)
-  {
-    quat_t eq;
-    eq.x() = q.x;
-    eq.y() = q.y;
-    eq.z() = q.z;
-    eq.w() = q.w;
-    // obtain the direction vector of q
-    const vec3_t dir = eq*vec3_t::UnitX();
-    // calculate the angle of its projection to the XY plane from the X axis
-    return std::atan2(dir.y(), dir.x());
-  }
-  
-  geometry_msgs::msg::Quaternion heading2quat(const double heading)
-  {
-    const quat_t q(anax_t(heading, vec3_t::UnitZ()));
-    geometry_msgs::msg::Quaternion msg;
-    msg.w = q.w();
-    msg.x = q.x();
-    msg.y = q.y();
-    msg.z = q.z();
-    return msg;
-  }
-  
-  octomap::point3d toPoint3d(const vec4_t& vec)
-  {
-    octomap::point3d p;
-    p.x() = (float)vec.x();
-    p.y() = (float)vec.y();
-    p.z() = (float)vec.z();
-    return p;
-  }
-
-  bool has_nans(const geometry_msgs::msg::Pose& pose)
-  {
-    return std::isnan(pose.position.x)
-     || std::isnan(pose.position.y)
-     || std::isnan(pose.position.z)
-     || std::isnan(pose.orientation.x)
-     || std::isnan(pose.orientation.y)
-     || std::isnan(pose.orientation.z)
-     || std::isnan(pose.orientation.w);
-  }
-
-  // returns the input vector with the fourth element wrapped to the range [-pi, pi]
-  vec4_t wrap_heading(const vec4_t& xyzheading)
-  {
-    return vec4_t(xyzheading.x(), xyzheading.y(), xyzheading.z(), sradians::wrap(xyzheading.w()));
-  }
-
-  /* add_reason_if helper string function //{ */
-
-  void add_reason_if(const std::string& reason, const bool condition, std::string& to_str)
-  {
-    if (condition)
-    {
-      if (to_str.empty())
-        to_str = reason;
-      else
-        to_str = to_str + ", " + reason;
-    }
-  }
-
-  //}
-  
-  //}
 
   /* class Navigation //{ */
   class Navigation : public rclcpp::Node
@@ -333,6 +264,7 @@ namespace navigation
   vec3_t to_eigen(const octomath::Vector3& vec);
   vec4_t to_eigen(const octomath::Vector3& vec, const double heading);
   vec4_t to_eigen(const geometry_msgs::msg::PoseStamped& pose);
+  octomap::point3d toPoint3d(const vec4_t& vec);
 
   /* constructor //{ */
   Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options)
@@ -1723,6 +1655,17 @@ namespace navigation
   vec4_t to_eigen(const geometry_msgs::msg::PoseStamped& pose)
   {
     return {pose.pose.position.x, pose.pose.position.y, pose.pose.position.z, quat2heading(pose.pose.orientation)};
+  }
+  //}
+  
+  /* toPoint3d() method //{ */
+  octomap::point3d toPoint3d(const vec4_t& vec)
+  {
+    octomap::point3d p;
+    p.x() = (float)vec.x();
+    p.y() = (float)vec.y();
+    p.z() = (float)vec.z();
+    return p;
   }
   //}
 
