@@ -70,6 +70,8 @@ namespace navigation
 
   /* helper functions //{ */
   
+  // returns the heading, which is the counterclockwise angle of a projection of q's direction vector to the XY plane from the X axis
+  // the returned value is in range [-pi, pi]
   double quat2heading(const geometry_msgs::msg::Quaternion& q)
   {
     quat_t eq;
@@ -77,7 +79,9 @@ namespace navigation
     eq.y() = q.y;
     eq.z() = q.z;
     eq.w() = q.w;
+    // obtain the direction vector of q
     const vec3_t dir = eq*vec3_t::UnitX();
+    // calculate the angle of its projection to the XY plane from the X axis
     return std::atan2(dir.y(), dir.x());
   }
   
@@ -100,11 +104,6 @@ namespace navigation
     p.z() = (float)vec.z();
     return p;
   }
-  
-  double nanosecondsToSecs(const int64_t nanoseconds)
-  {
-    return nanoseconds / 1e9;
-  }
 
   bool has_nans(const geometry_msgs::msg::Pose& pose)
   {
@@ -115,6 +114,12 @@ namespace navigation
      || std::isnan(pose.orientation.y)
      || std::isnan(pose.orientation.z)
      || std::isnan(pose.orientation.w);
+  }
+
+  // returns the input vector with the fourth element wrapped to the range [-pi, pi]
+  vec4_t wrap_heading(const vec4_t& xyzheading)
+  {
+    return vec4_t(xyzheading.x(), xyzheading.y(), xyzheading.z(), sradians::wrap(xyzheading.w()));
   }
 
   /* add_reason_if helper string function //{ */
@@ -217,7 +222,7 @@ namespace navigation
     double greedy_penalty_;
     double planning_tree_resolution_;
     double max_waypoint_distance_;
-    double max_yaw_step_;
+    double max_heading_step_;
     double planning_timeout_;
     int replanning_limit_;
     double replanning_distance_;
@@ -300,7 +305,7 @@ namespace navigation
     void visualizePath(const std::vector<vec4_t>& waypoints);
     void visualizeGoals(const std::deque<vec4_t>& waypoints);
 
-    std::vector<vec4_t> resamplePath(const std::vector<octomap::point3d>& waypoints, const double start_yaw, const double end_yaw) const;
+    std::vector<vec4_t> resamplePath(const std::vector<octomap::point3d>& waypoints, const double end_heading) const;
     std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPath(const std::vector<vec4_t>& waypoints);
     void startSendingWaypoints(const std::vector<vec4_t>& waypoints);
     void hover();
@@ -326,7 +331,7 @@ namespace navigation
   bool future_ready(const std::shared_future<T>& f);
   vec4_t to_eigen(const vec4_t& vec);
   vec3_t to_eigen(const octomath::Vector3& vec);
-  vec4_t to_eigen(const octomath::Vector3& vec, const double yaw);
+  vec4_t to_eigen(const octomath::Vector3& vec, const double heading);
   vec4_t to_eigen(const geometry_msgs::msg::PoseStamped& pose);
 
   /* constructor //{ */
@@ -349,7 +354,7 @@ namespace navigation
     loaded_successfully &= parse_param("planning.greedy_penalty", greedy_penalty_, *this);
     loaded_successfully &= parse_param("planning.planning_tree_resolution", planning_tree_resolution_, *this);
     loaded_successfully &= parse_param("planning.max_waypoint_distance", max_waypoint_distance_, *this);
-    loaded_successfully &= parse_param("planning.max_yaw_step", max_yaw_step_, *this);
+    loaded_successfully &= parse_param("planning.max_heading_step", max_heading_step_, *this);
     loaded_successfully &= parse_param("planning.planning_timeout", planning_timeout_, *this);
     loaded_successfully &= parse_param("planning.replanning_limit", replanning_limit_, *this);
     loaded_successfully &= parse_param("planning.replanning_distance", replanning_distance_, *this);
@@ -569,7 +574,8 @@ namespace navigation
     RCLCPP_INFO(get_logger(), "Recieved %ld waypoints", path.size());
     for (const auto& p : path)
     {
-      const vec4_t point = to_eigen(p);
+      // convert the point to eigen and ensure that the fourth element (heading) is in the range of [-pi, pi]
+      const vec4_t point = wrap_heading(to_eigen(p));
 
       if (point.z() < min_altitude_)
       {
@@ -686,7 +692,7 @@ namespace navigation
   {
     if (request->goal.size() != 4)
     {
-      response->message = "The waypoint must have 4 coordinates (x, y, z, yaw)! Ignoring request.";
+      response->message = "The waypoint must have 4 coordinates (x, y, z, heading)! Ignoring request.";
       response->success = false;
       RCLCPP_ERROR_STREAM(get_logger(), response->message);
       return true;
@@ -729,7 +735,7 @@ namespace navigation
   {
     if (request->goal.size() != 4)
     {
-      response->message = "The waypoint must have 4 coordinates (x, y, z, yaw)! Ignoring request.";
+      response->message = "The waypoint must have 4 coordinates (x, y, z, heading)! Ignoring request.";
       response->success = false;
       RCLCPP_ERROR_STREAM(get_logger(), response->message);
       return true;
@@ -748,7 +754,7 @@ namespace navigation
     waypoint_convert_req->latitude_deg = request->goal.at(0);
     waypoint_convert_req->longitude_deg = request->goal.at(1);
     waypoint_convert_req->relative_altitude_m = request->goal.at(2);
-    waypoint_convert_req->yaw = sradians::wrap(request->goal.at(3)); // ensure that the yaw is in the range [-pi, pi]
+    waypoint_convert_req->heading = sradians::wrap(request->goal.at(3)); // ensure that the heading is in the range [-pi, pi]
     waypoint_to_local_client_->async_send_request(waypoint_convert_req, std::bind(&Navigation::waypointFutureCallback, this, std::placeholders::_1));
 
     response->message = "Requesting transformation of waypoint from GPS to local coordinates";
@@ -807,7 +813,7 @@ namespace navigation
     }
 
     RCLCPP_INFO(get_logger(), "Coordinate transform returned: %.2f, %.2f", result->local_x, result->local_y);
-    const vec4_t point(result->local_x, result->local_y, result->local_z, sradians::wrap(result->yaw)); // ensure that the yaw is in the range [-pi, pi]
+    const vec4_t point(result->local_x, result->local_y, result->local_z, sradians::wrap(result->heading)); // ensure that the heading is in the range [-pi, pi]
     const std::vector<vec4_t> path = {point};
 
     std::string reason;
@@ -1206,7 +1212,8 @@ namespace navigation
       case GOAL_REACHED:
         /*  //{ */
         // if the current UAV heading is different from the desired, just turn
-        if (std::abs(uav_pose.w() - goal.w()) > max_yaw_step_)
+        // use sradians::dist instead of std::abs to correctly compare two cyclic values in range [-pi, pi]
+        if (sradians::dist(uav_pose.w(), goal.w()) > max_heading_step_)
         {
           goal_reached = false;
           append_goal = true;
@@ -1239,9 +1246,10 @@ namespace navigation
           const vec3_t w_start = to_eigen(path.front());
           const vec3_t w_end = to_eigen(path.back());
           const double path_start_end_dist = (w_end - w_start).norm();
+          // use sradians::dist instead of std::abs to correctly compare two cyclic values in range [-pi, pi]
           if (path_start_end_dist < planning_tree_resolution_)
           {
-            if (std::abs(uav_pose.w() - goal.w()) > max_yaw_step_)
+            if (sradians::dist(uav_pose.w(), goal.w()) > max_heading_step_)
             {
               append_goal = true;
               RCLCPP_INFO(get_logger(), "turning in one spot");
@@ -1277,8 +1285,8 @@ namespace navigation
     if (!path_valid)
       return {{}, goal_reached};
   
-    // resample path and add yaw
-    const std::vector<vec4_t> resampled = resamplePath(path, cmd_pose.w(), goal.w());
+    // resample path and add heading
+    const std::vector<vec4_t> resampled = resamplePath(path, goal.w());
   
     // finally, start filling the buffer up to the maximal replanning distance
     std::vector<vec4_t> planned_path;
@@ -1334,7 +1342,7 @@ namespace navigation
       if (bumper_msg.sectors.at(i) <= safe_obstacle_distance_ * bumper_distance_factor_)
       {
         const anax_t rot(sector_size*i + M_PI + uav_pose.w(), vec3_t::UnitZ());
-        const vec3_t avoidance_vector = rot * ((safe_obstacle_distance_ - bumper_msg.sectors[i] + planning_tree_resolution_) * forward);
+        const vec3_t avoidance_vector = rot * ((safe_obstacle_distance_ - bumper_msg.sectors.at(i) + planning_tree_resolution_) * forward);
         return avoidance_vector;
       }
     }
@@ -1343,18 +1351,19 @@ namespace navigation
   //}
 
   /* resamplePath //{ */
-  std::vector<vec4_t> Navigation::resamplePath(const std::vector<octomap::point3d>& waypoints, const double start_yaw, const double end_yaw) const
+  // resamples the path to limit the maximal distance between subsequent points and adds heading to the waypoints
+  std::vector<vec4_t> Navigation::resamplePath(const std::vector<octomap::point3d>& waypoints, const double end_heading) const
   {
     std::vector<vec4_t> ret;
 
     if (waypoints.size() < 2)
     {
       for (const auto& w : waypoints)
-        ret.push_back(to_eigen(w, end_yaw));
+        ret.push_back(to_eigen(w, end_heading));
       return ret;
     }
 
-    ret.push_back(to_eigen(waypoints.front(), 0.0));
+    ret.push_back(to_eigen(waypoints.front(), end_heading));
 
     size_t i = 1;
     while (i < waypoints.size())
@@ -1367,12 +1376,12 @@ namespace navigation
       {
         const vec3_t dir_vec = max_waypoint_distance_*diff_vec.normalized();
         const vec3_t padded = prev_pt + dir_vec;
-        const vec4_t padded_yaw(padded.x(), padded.y(), padded.z(), end_yaw);
-        ret.push_back(padded_yaw);
+        const vec4_t padded_heading(padded.x(), padded.y(), padded.z(), end_heading);
+        ret.push_back(padded_heading);
       }
       else
       {
-        ret.push_back(vec4_t(wp.x(), wp.y(), wp.z(), end_yaw));
+        ret.push_back(vec4_t(wp.x(), wp.y(), wp.z(), end_heading));
         // let's move to processing the next point in the path
         i++;
       }
@@ -1390,13 +1399,13 @@ namespace navigation
     nav_msgs::msg::Path msg;
     msg.header.stamp = get_clock()->now();
     msg.header.frame_id = get_mutexed(octree_mutex_, octree_frame_);
-    for (size_t i = 0; i < waypoints.size(); i++)
+    for (const auto& wp : waypoints)
     {
       geometry_msgs::msg::PoseStamped p;
-      p.pose.position.x = waypoints[i].x();
-      p.pose.position.y = waypoints[i].y();
-      p.pose.position.z = waypoints[i].z();
-      p.pose.orientation = heading2quat(waypoints[i].w());
+      p.pose.position.x = wp.x();
+      p.pose.position.y = wp.y();
+      p.pose.position.z = wp.z();
+      p.pose.orientation = heading2quat(wp.w());
       msg.poses.push_back(p);
     }
     auto path_srv = std::make_shared<fog_msgs::srv::Path::Request>();
@@ -1706,9 +1715,9 @@ namespace navigation
     return {vec.x(), vec.y(), vec.z()};
   }
   
-  vec4_t to_eigen(const octomath::Vector3& vec, const double yaw)
+  vec4_t to_eigen(const octomath::Vector3& vec, const double heading)
   {
-    return {vec.x(), vec.y(), vec.z(), yaw};
+    return {vec.x(), vec.y(), vec.z(), heading};
   }
 
   vec4_t to_eigen(const geometry_msgs::msg::PoseStamped& pose)
