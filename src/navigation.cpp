@@ -131,6 +131,9 @@ namespace navigation
     rclcpp::TimerBase::SharedPtr execution_timer_;
     void navigationRoutine();
 
+    rclcpp::TimerBase::SharedPtr diagnostics_timer_;
+    void diagnosticsRoutine();
+
     void state_navigation_common();
     void state_navigation_not_ready();
     void state_navigation_idle();
@@ -376,6 +379,9 @@ namespace navigation
     // timers
     execution_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / main_update_rate_),
         std::bind(&Navigation::navigationRoutine, this), new_cbk_grp());
+
+    diagnostics_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / main_update_rate_),
+        std::bind(&Navigation::diagnosticsRoutine, this), new_cbk_grp());
 
     if (max_waypoint_distance_ <= 0)
       max_waypoint_distance_ = replanning_distance_;
@@ -826,6 +832,13 @@ namespace navigation
     std_msgs::msg::String msg;
     msg.data = to_string(state_);
     status_publisher_->publish(msg);
+  }
+  //}
+
+  /* diagnosticsRoutine //{ */
+  void Navigation::diagnosticsRoutine()
+  {
+    std::scoped_lock lck(state_mutex_, waypoints_mutex_);
     publishDiagnostics();
   }
   //}

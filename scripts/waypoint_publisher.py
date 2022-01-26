@@ -19,10 +19,10 @@ from geometry_msgs.msg import PoseStamped
 from geometry_msgs.msg import Quaternion
 
 WAYPOINTS_LOCAL=[
-    [0,0,3,0],
-    [-5,4,2,0],
-    [7,-5,2,0],
-    [0,0,2,0]
+    [0,0,3,1],
+    [-5,4,2,2],
+    [7,-5,2,3],
+    [0,0,2,4]
 ]
 
 WAYPOINTS_GPS=[
@@ -37,7 +37,7 @@ def quaternion_from_euler(roll, pitch, yaw):
     """
     Converts euler roll, pitch, yaw to quaternion (w in last place)
     quat = [x, y, z, w]
-    Bellow should be replaced when porting for ROS 2 Python tf_conversions is done.
+    Code below should be replaced when porting for ROS 2 Python tf_conversions is done.
     """
     cy = math.cos(yaw * 0.5)
     sy = math.sin(yaw * 0.5)
