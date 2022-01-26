@@ -1341,54 +1341,18 @@ namespace navigation
       {
         const vec3_t dir_vec = max_waypoint_distance_*diff_vec.normalized();
         const vec3_t padded = prev_pt + dir_vec;
-        // yaw will be recalculated later
-        const vec4_t padded_yaw(padded.x(), padded.y(), padded.z(), 0.0);
+        const vec4_t padded_yaw(padded.x(), padded.y(), padded.z(), end_yaw);
         ret.push_back(padded_yaw);
       }
       else
       {
-        // yaw will be recalculated later
-        ret.push_back(vec4_t(wp.x(), wp.y(), wp.z(), 0.0));
+        ret.push_back(vec4_t(wp.x(), wp.y(), wp.z(), end_yaw));
         // let's move to processing the next point in the path
         i++;
       }
     }
 
     RCLCPP_INFO(get_logger(), "Padded %lu original waypoints to %lu points", waypoints.size(), ret.size());
-
-    /* add yaw //{ */
-
-    const double delta_yaw = std::atan2(std::sin(end_yaw - start_yaw), std::cos(end_yaw - start_yaw));
-    double yaw_step = delta_yaw / ret.size();
-    RCLCPP_INFO(get_logger(), "Start yaw: %.2f, end yaw: %.2f, yaw step: %.2f", start_yaw, end_yaw, yaw_step);
-
-    if (std::abs(yaw_step) <= max_yaw_step_)
-    {
-      ret.front().w() = start_yaw;
-      for (size_t j = 1; j < ret.size(); j++)
-        ret.at(j).w() = ret.at(j - 1).w() + yaw_step;
-    }
-    else
-    {
-      // resample again to limit yaw rate and avoid fast turning
-      const int resampling_factor = int(std::abs(yaw_step) / max_yaw_step_) + 1;
-      RCLCPP_INFO(get_logger(), "Yaw step: %.2f is greater than max yaw step: %.2f", yaw_step, max_yaw_step_);
-      RCLCPP_INFO(get_logger(), "Resampling factor: %d", resampling_factor);
-      std::vector<vec4_t> resampled;
-      for (const auto& p : ret)
-        for (int j = 0; j < resampling_factor; j++)
-          resampled.push_back(p);
-
-      ret.clear();
-      ret.insert(ret.end(), resampled.begin(), resampled.end());
-      yaw_step = delta_yaw / ret.size();
-      RCLCPP_INFO(get_logger(), "New yaw step: %.2f", yaw_step);
-      ret.front().w() = start_yaw;
-      for (size_t j = 1; j < ret.size(); j++)
-        ret.at(j).w() = ret.at(j - 1).w() + yaw_step;
-    }
-
-    //}
 
     return ret;
   }
