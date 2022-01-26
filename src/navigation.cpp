@@ -1417,13 +1417,19 @@ namespace navigation
   // | -------------- Publish/visualization methods ------------- |
 
   /* publishDiagnostics //{ */
+  std::string toupper(std::string s)
+  {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::toupper(c); });
+    return s;
+  }
+
   void Navigation::publishDiagnostics()
   {
     fog_msgs::msg::NavigationDiagnostics msg;
     msg.header.stamp = get_clock()->now();
     msg.header.frame_id = get_mutexed(octree_mutex_, octree_frame_);
-    msg.state = std::toupper(to_string(state_));
-    msg.current_waypoint_status = std::toupper(to_string(waypoint_state_));
+    msg.state = toupper(to_string(state_));
+    msg.current_waypoint_status = toupper(to_string(waypoint_state_));
     msg.waypoints_in_buffer = waypoints_in_.size();
     msg.bumper_active = state_ == nav_state_t::avoiding;
     msg.current_waypoint_id = waypoint_current_it_;
