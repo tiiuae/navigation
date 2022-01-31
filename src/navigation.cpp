@@ -103,6 +103,7 @@ private:
   bool show_unoccupied_             = false;
   bool override_previous_commands_  = false;
   bool bumper_active_               = false;
+  bool manual_control_              = false;
 
   std::string parent_frame_;
   int         replanning_counter_ = 0;
@@ -397,6 +398,7 @@ void Navigation::controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfac
   RCLCPP_INFO_ONCE(this->get_logger(), "[%s]: Getting control_interface diagnostics", this->get_name());
   control_moving_ = msg->moving;
   goal_reached_   = msg->mission_finished;
+  manual_control_ = msg->manual_control;
   diagnostics_received_ = true;
 }
 //}
@@ -817,6 +819,18 @@ void Navigation::navigationRoutine(void) {
       /* PLANNING //{ */
       case PLANNING: {
 
+        {
+          std::scoped_lock lock(control_diagnostics_mutex_);
+          if (manual_control_) {
+            RCLCPP_INFO(this->get_logger(), "[%s]: Manual control enabled, switching to IDLE", this->get_name());
+            waypoint_in_buffer_.clear();
+            waypoint_out_buffer_.clear();
+            status_          = IDLE;
+            waypoint_status_ = EMPTY;
+            break;
+          }
+        }
+
         waypoint_out_buffer_.clear();
 
         if (hover_requested_) {
@@ -978,6 +992,18 @@ void Navigation::navigationRoutine(void) {
       /* COMMANDING //{ */
       case COMMANDING: {
 
+        {
+          std::scoped_lock lock(control_diagnostics_mutex_);
+          if (manual_control_) {
+            RCLCPP_INFO(this->get_logger(), "[%s]: Manual control enabled, switching to IDLE", this->get_name());
+            waypoint_in_buffer_.clear();
+            waypoint_out_buffer_.clear();
+            status_          = IDLE;
+            waypoint_status_ = EMPTY;
+            break;
+          }
+        }
+
         if (hover_requested_) {
           hover();
           status_ = IDLE;
@@ -1011,6 +1037,19 @@ void Navigation::navigationRoutine(void) {
 
         /* MOVING //{ */
       case MOVING: {
+
+        {
+          std::scoped_lock lock(control_diagnostics_mutex_);
+          if (manual_control_) {
+            RCLCPP_INFO(this->get_logger(), "[%s]: Manual control enabled, switching to IDLE", this->get_name());
+            waypoint_in_buffer_.clear();
+            waypoint_out_buffer_.clear();
+            status_          = IDLE;
+            waypoint_status_ = EMPTY;
+            break;
+          }
+        }
+
         if (hover_requested_) {
           hover();
           status_ = IDLE;
@@ -1055,6 +1094,17 @@ void Navigation::navigationRoutine(void) {
 
         /* AVOIDING //{ */
       case AVOIDING: {
+        {
+          std::scoped_lock lock(control_diagnostics_mutex_);
+          if (manual_control_) {
+            RCLCPP_INFO(this->get_logger(), "[%s]: Manual control enabled, switching to IDLE", this->get_name());
+            waypoint_in_buffer_.clear();
+            waypoint_out_buffer_.clear();
+            status_          = IDLE;
+            waypoint_status_ = EMPTY;
+            break;
+          }
+        }
 
         std::scoped_lock lock(bumper_mutex_);
         Eigen::Vector3d  avoidance_vector = bumperGetAvoidanceVector(*bumper_msg_);
