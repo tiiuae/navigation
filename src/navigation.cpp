@@ -161,6 +161,7 @@ namespace navigation
     int replanning_limit_;
     double replanning_distance_;
     double main_update_rate_;
+    double diagnostics_rate_;
 
     bool bumper_enabled_;
     double bumper_distance_factor_;
@@ -295,6 +296,7 @@ namespace navigation
     loaded_successfully &= parse_param("planning.replanning_distance", replanning_distance_, *this);
     loaded_successfully &= parse_param("planning.override_previous_commands", override_previous_commands_, *this);
     loaded_successfully &= parse_param("planning.main_update_rate", main_update_rate_, *this);
+    loaded_successfully &= parse_param("planning.diagnostics_rate", diagnostics_rate_, *this);
 
     loaded_successfully &= parse_param("visualization.visualize_planner", visualize_planner_, *this);
     loaded_successfully &= parse_param("visualization.show_unoccupied", show_unoccupied_, *this);
@@ -380,7 +382,7 @@ namespace navigation
     execution_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / main_update_rate_),
         std::bind(&Navigation::navigationRoutine, this), new_cbk_grp());
 
-    diagnostics_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / main_update_rate_),
+    diagnostics_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / diagnostics_rate_),
         std::bind(&Navigation::diagnosticsRoutine, this), new_cbk_grp());
 
     if (max_waypoint_distance_ <= 0)

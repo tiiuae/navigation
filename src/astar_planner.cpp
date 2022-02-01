@@ -5,49 +5,55 @@
 namespace navigation
 {
 
-bool Node::operator==(const Node &other) const {
-  return key == other.key;
-}
-
-bool Node::operator!=(const Node &other) const {
-  return key != other.key;
-}
-
-bool Node::operator<(const Node &other) const {
-
-  if (total_cost == other.total_cost) {
-    return goal_dist < other.goal_dist;
+  /* Node class implementation and related free functions //{ */
+  
+  bool Node::operator==(const Node &other) const {
+    return key == other.key;
+  }
+  
+  bool Node::operator!=(const Node &other) const {
+    return key != other.key;
+  }
+  
+  bool Node::operator<(const Node &other) const {
+  
+    if (total_cost == other.total_cost) {
+      return goal_dist < other.goal_dist;
+    }
+  
+    return total_cost < other.total_cost;
+  }
+  
+  bool Node::operator<=(const Node &other) const {
+  
+    if (total_cost == other.total_cost) {
+      return goal_dist <= other.goal_dist;
+    }
+  
+    return total_cost <= other.total_cost;
   }
 
-  return total_cost < other.total_cost;
-}
+  bool CostComparator::operator()(const Node &n1, const Node &n2) const {
 
-bool Node::operator<=(const Node &other) const {
+    if (n1.total_cost == n2.total_cost) {
+      return n1.goal_dist > n2.goal_dist;
+    }
 
-  if (total_cost == other.total_cost) {
-    return goal_dist <= other.goal_dist;
+    return n1.total_cost > n2.total_cost;
   }
 
-  return total_cost <= other.total_cost;
-}
-
-bool CostComparator::operator()(const Node &n1, const Node &n2) const {
-
-  if (n1.total_cost == n2.total_cost) {
-    return n1.goal_dist > n2.goal_dist;
+  bool HashFunction::operator()(const Node &n) const {
+    using std::hash;
+    return ((hash<int>()(n.key.k[0]) ^ (hash<int>()(n.key.k[1]) << 1)) >> 1) ^ (hash<int>()(n.key.k[2]) << 1);
   }
 
-  return n1.total_cost > n2.total_cost;
-}
-
-bool HashFunction::operator()(const Node &n) const {
-  using std::hash;
-  return ((hash<int>()(n.key.k[0]) ^ (hash<int>()(n.key.k[1]) << 1)) >> 1) ^ (hash<int>()(n.key.k[2]) << 1);
-}
+  //}
 
 bool LeafComparator::operator()(const std::pair<octomap::OcTree::iterator, double> &l1, const std::pair<octomap::OcTree::iterator, double> &l2) const {
   return l1.second < l2.second;
 }
+
+/* AstarPlanner class implementation //{ */
 
 /* AstarPlanner constructor //{ */
 AstarPlanner::AstarPlanner(double safe_obstacle_distance, double euclidean_distance_cutoff, double planning_tree_resolution, double distance_penalty,
@@ -594,6 +600,8 @@ std::pair<octomap::point3d, bool> AstarPlanner::generateTemporaryGoal(const octo
 
   return {temp_goal, vertical_priority};
 }
+//}
+
 //}
 
 }  // namespace navigation

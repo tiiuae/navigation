@@ -16,6 +16,7 @@ planning:
   replanning_distance: 15.0 # [m] Euclidean distance from first waypoint
   override_previous_commands: true # new GOTO will override all previous actions
   main_update_rate: 10.0 # [Hz] 
+  diagnostics_rate: 1.0 # [Hz] 
 
 visualization:
   visualize_planner: true
