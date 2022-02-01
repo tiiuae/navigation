@@ -1131,7 +1131,7 @@ namespace navigation
   {
     navigation::AstarPlanner planner = navigation::AstarPlanner(
         safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_,
-        min_altitude_, max_altitude_, planning_timeout_, max_waypoint_distance_, unknown_is_occupied_
+        min_altitude_, max_altitude_, planning_timeout_, max_waypoint_distance_, unknown_is_occupied_, get_logger()
       );
     const vec4_t uav_pose = get_mutexed(uav_pose_mutex_, uav_pose_);
     const vec4_t cmd_pose = get_mutexed(cmd_pose_mutex_, cmd_pose_);
@@ -1252,7 +1252,10 @@ namespace navigation
     }
   
     if (append_goal)
+    {
       planned_path.push_back(goal);
+      RCLCPP_INFO(get_logger(), "Appended current goal waypoint to the path.");
+    }
   
     return {planned_path, goal_reached};
   }
@@ -1371,6 +1374,7 @@ namespace navigation
   /* startSendingWaypoints() method //{ */
   void Navigation::startSendingWaypoints(const std::vector<vec4_t>& waypoints)
   {
+    RCLCPP_INFO_STREAM(get_logger(), "Sending waypoints to command_interface:");
     for (const auto& w : waypoints)
       RCLCPP_INFO_STREAM(get_logger(), "       " << w.transpose());
     visualizePath(waypoints);

@@ -49,17 +49,17 @@ namespace navigation
 
   //}
 
-bool LeafComparator::operator()(const std::pair<octomap::OcTree::iterator, double> &l1, const std::pair<octomap::OcTree::iterator, double> &l2) const {
+bool LeafComparator::operator()(const std::pair<octomap::OcTree::iterator, float> &l1, const std::pair<octomap::OcTree::iterator, float> &l2) const {
   return l1.second < l2.second;
 }
 
 /* AstarPlanner class implementation //{ */
 
 /* AstarPlanner constructor //{ */
-AstarPlanner::AstarPlanner(double safe_obstacle_distance, double euclidean_distance_cutoff, double planning_tree_resolution, double distance_penalty,
-                           double greedy_penalty, double min_altitude, double max_altitude, double timeout_threshold, double max_waypoint_distance,
-                           bool unknown_is_occupied) {
-
+AstarPlanner::AstarPlanner(float safe_obstacle_distance, float euclidean_distance_cutoff, float planning_tree_resolution, float distance_penalty, float greedy_penalty,
+               float min_altitude, float max_altitude, float timeout_threshold, float max_waypoint_distance, bool unknown_is_occupied, const rclcpp::Logger& logger)
+  : logger_(logger)
+{
   this->safe_obstacle_distance    = safe_obstacle_distance;
   this->euclidean_distance_cutoff = euclidean_distance_cutoff;
   this->planning_tree_resolution  = planning_tree_resolution;
@@ -76,13 +76,13 @@ AstarPlanner::AstarPlanner(double safe_obstacle_distance, double euclidean_dista
 /* findPath //{ */
 
 std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
-    const octomap::point3d &start_coord, const octomap::point3d &goal_coord, std::shared_ptr<octomap::OcTree> mapping_tree, double timeout,
+    const octomap::point3d &start_coord, const octomap::point3d &goal_coord, std::shared_ptr<octomap::OcTree> mapping_tree, float timeout,
     std::function<void(const octomap::OcTree &)> visualizeTree,
     std::function<void(const std::unordered_set<Node, HashFunction> &, const std::unordered_set<Node, HashFunction> &, const octomap::OcTree &)>
         visualizeExpansions) {
 
-  printf("[Astar]: Astar: start [%.2f, %.2f, %.2f]\n", start_coord.x(), start_coord.y(), start_coord.z());
-  printf("[Astar]: Astar: goal [%.2f, %.2f, %.2f]\n", goal_coord.x(), goal_coord.y(), goal_coord.z());
+  RCLCPP_INFO(logger_,"[Astar]: Astar: start [%.2f, %.2f, %.2f]", start_coord.x(), start_coord.y(), start_coord.z());
+  RCLCPP_INFO(logger_,"[Astar]: Astar: goal [%.2f, %.2f, %.2f]", goal_coord.x(), goal_coord.y(), goal_coord.z());
 
   auto time_start = std::chrono::high_resolution_clock::now();
 
@@ -90,11 +90,11 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
 
   auto time_start_planning_tree = std::chrono::high_resolution_clock::now();
   auto tree_with_tunnel         = createPlanningTree(mapping_tree, start_coord, planning_tree_resolution);
-  printf("[Astar]: the planning tree took %.2f s to create\n",
-         std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - time_start_planning_tree).count());
+  RCLCPP_INFO(logger_,"[Astar]: the planning tree took %.2f s to create",
+         std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - time_start_planning_tree).count());
 
   if (!tree_with_tunnel) {
-    printf("[Astar]: could not create a planning tree\n");
+    RCLCPP_INFO(logger_,"[Astar]: could not create a planning tree");
     return {std::vector<octomap::point3d>(), FAILURE};
   }
 
@@ -103,27 +103,33 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
   auto tree   = tree_with_tunnel.value().first;
   auto tunnel = tree_with_tunnel.value().second;
 
+  const auto map_query = tree_with_tunnel->first.search(goal_coord);
   auto map_goal      = goal_coord;
-  auto map_query     = tree_with_tunnel->first.search(goal_coord);
   bool original_goal = true;
 
-  if (map_query == NULL) {
-    printf("[Astar]: Goal is outside of map\n");
-    auto temp_goal = generateTemporaryGoal(start_coord, goal_coord, tree);
-    printf("[Astar]: Generated a temporary goal: [%.2f, %.2f, %.2f]\n", temp_goal.first.x(), temp_goal.first.y(), temp_goal.first.z());
-    if (temp_goal.second) {
+  if (map_query == nullptr)
+  {
+    RCLCPP_INFO(logger_,"[Astar]: Goal is outside of map");
+    const auto [temp_goal, vertical_priority] = generateTemporaryGoal(start_coord, goal_coord, tree);
+    RCLCPP_INFO(logger_,"[Astar]: Generated a temporary goal: [%.2f, %.2f, %.2f]", temp_goal.x(), temp_goal.y(), temp_goal.z());
+    if (vertical_priority)
+    {
       std::vector<octomap::point3d> vertical_path;
       vertical_path.push_back(start_coord);
-      vertical_path.push_back(temp_goal.first);
+      vertical_path.push_back(temp_goal);
       return {vertical_path, INCOMPLETE};
-    } else {
-      map_goal      = temp_goal.first;
+    }
+    else
+    {
+      map_goal      = temp_goal;
       original_goal = false;
     }
-  } else if (map_query->getValue() == TreeValue::OCCUPIED) {
-    printf("[Astar]: Goal is inside an inflated obstacle\n");
-    if (distEuclidean(map_goal, start_coord) <= 1 * safe_obstacle_distance) {
-      printf("[Astar]: Path special case, we cannot get closer\n");
+  } else if (map_query->getValue() == TreeValue::OCCUPIED)
+  {
+    RCLCPP_INFO(logger_,"[Astar]: Goal is inside an inflated obstacle");
+    if (distEuclidean(map_goal, start_coord) <= 1 * safe_obstacle_distance)
+    {
+      RCLCPP_INFO(logger_,"[Astar]: Path special case, we cannot get closer");
       return {std::vector<octomap::point3d>(), GOAL_REACHED};
     }
   }
@@ -145,15 +151,15 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
 
   if (distEuclidean(planning_start, map_goal) <= 2 * planning_tree_resolution) {
 
-    printf("[Astar]: Path special case, we are there\n");
+    RCLCPP_INFO(logger_,"[Astar]: Path special case, we are there");
 
     visualizeExpansions(open, closed, tree);
 
     return {std::vector<octomap::point3d>(), GOAL_REACHED};
   }
 
-  std::cout << "[Astar]: Planning from: " << planning_start.x() << ", " << planning_start.y() << ", " << planning_start.z() << "\n";
-  std::cout << "[Astar]: Planning to: " << map_goal.x() << ", " << map_goal.y() << ", " << map_goal.z() << "\n";
+  RCLCPP_INFO_STREAM(logger_, "[Astar]: Planning from: " << planning_start.x() << ", " << planning_start.y() << ", " << planning_start.z());
+  RCLCPP_INFO_STREAM(logger_, "[Astar]: Planning to: " << map_goal.x() << ", " << map_goal.y() << ", " << map_goal.z());
 
   Node first;
   first.key        = start;
@@ -179,11 +185,11 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
 
     auto time_now = std::chrono::high_resolution_clock::now();
 
-    if (std::chrono::duration<double>(time_now - time_start).count() > timeout_threshold) {
+    if (std::chrono::duration<float>(time_now - time_start).count() > timeout_threshold) {
 
-      printf("[Astar]: Planning timeout! Using current best node as goal.\n");
+      RCLCPP_INFO(logger_,"[Astar]: Planning timeout! Using current best node as goal.");
       auto path_keys = backtrackPathKeys(best_node == first ? best_node_greedy : best_node, first, parent_map);
-      printf("[Astar]: Path found. Length: %ld\n", path_keys.size());
+      RCLCPP_INFO(logger_,"[Astar]: Path found. Length: %ld", path_keys.size());
 
       visualizeExpansions(open, closed, tree);
 
@@ -196,7 +202,7 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
 
       auto path_keys = backtrackPathKeys(current, first, parent_map);
       path_keys.push_back(tree.coordToKey(map_goal));
-      printf("[Astar]: Path found. Length: %ld\n", path_keys.size());
+      RCLCPP_INFO(logger_,"[Astar]: Path found. Length: %ld", path_keys.size());
 
       visualizeExpansions(open, closed, tree);
 
@@ -245,7 +251,7 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
 
     auto path_keys = backtrackPathKeys(best_node, first, parent_map);
 
-    printf("[Astar]: direct path does not exist, going to the 'best_node'\n");
+    RCLCPP_INFO(logger_,"[Astar]: direct path does not exist, going to the 'best_node'");
 
     return {prepareOutputPath(path_keys, tree), INCOMPLETE};
   }
@@ -254,7 +260,7 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
 
     auto path_keys = backtrackPathKeys(best_node_greedy, first, parent_map);
 
-    printf("[Astar]: direct path does not exist, going to the best_node_greedy'\n");
+    RCLCPP_INFO(logger_,"[Astar]: direct path does not exist, going to the best_node_greedy'");
 
     return {prepareOutputPath(path_keys, tree), INCOMPLETE};
   }
@@ -263,11 +269,11 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
     std::vector<octomap::point3d> path_to_safety;
     path_to_safety.push_back(start_coord);
     path_to_safety.push_back(tunnel.back());
-    printf("[Astar]: path does not exist, escaping no-go zone'\n");
+    RCLCPP_INFO(logger_,"[Astar]: path does not exist, escaping no-go zone'");
     return {path_to_safety, INCOMPLETE};
   }
 
-  printf("[Astar]: PATH DOES NOT EXIST!\n");
+  RCLCPP_INFO(logger_,"[Astar]: PATH DOES NOT EXIST!");
 
   return {std::vector<octomap::point3d>(), FAILURE};
 }
@@ -314,14 +320,14 @@ octomap::OcTreeKey AstarPlanner::expand(const octomap::OcTreeKey &key, const std
 
 /* distEuclidean() //{ */
 
-double AstarPlanner::distEuclidean(const octomap::point3d &p1, const octomap::point3d &p2) {
+float AstarPlanner::distEuclidean(const octomap::point3d &p1, const octomap::point3d &p2) {
 
   return (p1 - p2).norm();
 }
 
-double AstarPlanner::distEuclidean(const octomap::OcTreeKey &k1, const octomap::OcTreeKey &k2, octomap::OcTree &tree) {
+float AstarPlanner::distEuclidean(const octomap::OcTreeKey &k1, const octomap::OcTreeKey &k2, octomap::OcTree &tree) {
 
-  double voxel_dist = sqrt(pow(k1.k[0] - k2.k[0], 2) + pow(k1.k[1] - k2.k[1], 2) + pow(k1.k[2] - k2.k[2], 2));
+  float voxel_dist = sqrt(pow(k1.k[0] - k2.k[0], 2) + pow(k1.k[1] - k2.k[1], 2) + pow(k1.k[2] - k2.k[2], 2));
 
   return voxel_dist * tree.getResolution();
 }
@@ -395,8 +401,8 @@ std::vector<octomap::point3d> AstarPlanner::keysToCoords(std::vector<octomap::Oc
 
 /* euclideanDistanceTransform() //{ */
 
-DynamicEDTOctomap AstarPlanner::euclideanDistanceTransform(std::shared_ptr<octomap::OcTree> tree) {
-
+DynamicEDTOctomap AstarPlanner::euclideanDistanceTransform(std::shared_ptr<octomap::OcTree> tree)
+{
   double x, y, z;
 
   tree->getMetricMin(x, y, z);
@@ -415,7 +421,7 @@ DynamicEDTOctomap AstarPlanner::euclideanDistanceTransform(std::shared_ptr<octom
 /* createPlanningTree() //{ */
 
 std::optional<std::pair<octomap::OcTree, std::vector<octomap::point3d>>> AstarPlanner::createPlanningTree(std::shared_ptr<octomap::OcTree> tree,
-                                                                                                          const octomap::point3d &start, double resolution) {
+                                                                                                          const octomap::point3d &start, float resolution) {
 
   auto            edf         = euclideanDistanceTransform(tree);
   octomap::OcTree binary_tree = octomap::OcTree(resolution);
@@ -437,7 +443,7 @@ std::optional<std::pair<octomap::OcTree, std::vector<octomap::point3d>>> AstarPl
 
   if (binary_tree_query != NULL && binary_tree_query->getValue() != TreeValue::FREE) {
 
-    printf("[Astar]: start is inside of an inflated obstacle, tunneling out\n");
+    RCLCPP_INFO(logger_,"[Astar]: start is inside of an inflated obstacle, tunneling out");
 
     // tunnel out of expanded walls
 
@@ -459,7 +465,7 @@ std::optional<std::pair<octomap::OcTree, std::vector<octomap::point3d>>> AstarPl
       octomap::point3d dir_away_from_obstacle = current_coords - closest_obstacle;
 
       if (obstacle_dist >= safe_obstacle_distance) {
-        printf("[Astar]: tunnel created with %d\n", int(tunnel.size()));
+        RCLCPP_INFO(logger_,"[Astar]: tunnel created with %d", int(tunnel.size()));
         break;
       }
 
@@ -492,7 +498,7 @@ std::optional<std::pair<octomap::OcTree, std::vector<octomap::point3d>>> AstarPl
 std::vector<octomap::point3d> AstarPlanner::filterPath(const std::vector<octomap::point3d> &waypoints, octomap::OcTree &tree) {
 
   if (waypoints.size() < 3) {
-    printf("[Astar]: Not enough points for filtering!\n");
+    RCLCPP_INFO(logger_,"[Astar]: Not enough points for filtering!");
     return waypoints;
   }
 
@@ -540,24 +546,24 @@ std::pair<octomap::point3d, bool> AstarPlanner::generateTemporaryGoal(const octo
   // check if it is necessary to change altitude and acquire more of map
   if (std::abs(goal.z() - start.z()) > planning_tree_resolution) {
     vertical_priority = true;
-    printf("[Astar]: give priority to vertical motion\n");
+    RCLCPP_INFO(logger_,"[Astar]: give priority to vertical motion");
     temp_goal.x() = start.x();
     temp_goal.y() = start.y();
     temp_goal.z() = goal.z();  // scan new layers of octomap if needed
 
     if (temp_goal.z() > max_altitude) {
-      printf("[Astar]: capping at max altitude\n");
+      RCLCPP_INFO(logger_,"[Astar]: capping at max altitude");
       temp_goal.z() = max_altitude;
     }
     if (temp_goal.z() < min_altitude) {
-      printf("[Astar]: capping at min altitude\n");
+      RCLCPP_INFO(logger_,"[Astar]: capping at min altitude");
       temp_goal.z() = min_altitude;
     }
     return {temp_goal, vertical_priority};
   }
 
   // try to explore unknown cells
-  std::set<std::pair<octomap::OcTree::iterator, double>, LeafComparator> leafs;
+  std::set<std::pair<octomap::OcTree::iterator, float>, LeafComparator> leafs;
 
   for (auto it = tree.begin_leafs(); it != tree.end_leafs(); it++) {
 
