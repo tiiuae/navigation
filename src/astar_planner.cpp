@@ -565,22 +565,10 @@ std::pair<octomap::point3d, bool> AstarPlanner::generateTemporaryGoal(const octo
   // try to explore unknown cells
   std::set<std::pair<octomap::OcTree::iterator, float>, LeafComparator> leafs;
 
+  RCLCPP_INFO(logger_,"[Astar]: Sorting octree leafs");
   for (auto it = tree.begin_leafs(); it != tree.end_leafs(); it++) {
 
     if (it->getValue() == TreeValue::OCCUPIED) {
-      continue;
-    }
-
-    auto k = it.getKey();
-    k.k[2] += 1;
-
-    if (tree.search(k) == NULL) {
-      continue;
-    }
-
-    k.k[2] -= 2;
-
-    if (tree.search(k) == NULL) {
       continue;
     }
 
@@ -590,6 +578,7 @@ std::pair<octomap::point3d, bool> AstarPlanner::generateTemporaryGoal(const octo
   // sort free nodes on the map edge by their distance from goal
   if (!leafs.empty()) {
     // select the closest point
+    RCLCPP_INFO(logger_,"[Astar]: Selected closest leaf as temporary goal");
     return {leafs.begin()->first.getCoordinate(), vertical_priority};
   }
 
@@ -603,6 +592,8 @@ std::pair<octomap::point3d, bool> AstarPlanner::generateTemporaryGoal(const octo
       temp_goal = coords;
     }
   }
+
+  RCLCPP_INFO(logger_,"[Astar]: No valid leaves found. Using raycast to produce temporary goal");
 
   return {temp_goal, vertical_priority};
 }
