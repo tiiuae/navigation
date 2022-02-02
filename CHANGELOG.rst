@@ -2,6 +2,50 @@
 Changelog for package navigation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+0.1.0 (2022-02-02)
+-----------
+* prevent temporary goal generation from skipping octree frontiers
+* minor refactor, astar planner will now log to console
+* diagnostics timer now has a separate rate
+* dedicated timer for diagnostics publishing
+* moved some common functions to fog_lib
+* renamed yaw to heading, fixed heading issues
+* Merge branch 'matous' of github.com:fly4future/navigation into matous
+* wip fixing yaw->heading
+* removed continuous yaw change - yaw will now be set to the desired value ASAP
+* states are now publised uppercase in the diagnostics
+* carefully rewrote mutex locking order to avoid deadlocks
+* removed potential deadlock
+* added check for correct size of Vec4 request
+* added bumper min replan period, minor refactoring
+* add ID to control requests and responses
+* fixed bug with missing waypoint increment when mission is finished
+* fixed control_interface dependency
+* when avoiding, navigation will only send one service request at a time and wait for it to finish before sending a new one
+* control interface state enums will now be decoded from ROS messages using the functions defined in control_interface
+* added fog_lib dependency and moved some code there
+* removed redundant NED to ENU conversion of cmd_pose and fixed debug mode
+* minor fixes and refactoring, cmd pose is now taken from control_interface instead of pixhawk messages
+* minor refactor and cleanup
+* fixes with mutexes
+* changed callback groups to mut.ex., fix for foxy parameter loading
+* working version, refactoring, fixes
+* wip rewriting control interface diags message
+* refactoring and bug fixing wip
+* started some refactoring and fixes
+* Remove status topic remapping, conflicts mission-engine
+* Add galactic fix, update invoke tasks
+  Ability to pass commit hash to packaging and build scripts
+  Move git rev-parse commands to build.sh from invoke tasks
+  Add tagging to docker images
+* Galactic support for main.yaml workflow
+* Add containerized build workflow
+* New build scripts with container build
+* fix debug print
+* Resolve conflict
+* New build scripts, remove fogsw-ci-scripts
+* fix yaw step printed as double
+
 0.0.8 (2021-11-30)
 -----------
 * update package versions
@@ -86,6 +130,7 @@ Changelog for package navigation
 * Reduce safe obsatcle distance
   Reason is to have more possible paths available in indoor testing.
 * Contributors: Esa Kulmala, Jari Nippula, Manuel Segarra-Abad, Vojtech Spurny, stibipet
+
 
 0.0.3 (2021-06-21)
 -----------
