@@ -70,6 +70,12 @@ namespace navigation
   using vehicle_state_t = control_interface::vehicle_state_t;
   using mission_state_t = control_interface::mission_state_t;
 
+  std::string toupper(std::string s)
+  {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::toupper(c); });
+    return s;
+  }
+
   /* class Navigation //{ */
   class Navigation : public rclcpp::Node
   {
@@ -832,7 +838,7 @@ namespace navigation
     RCLCPP_INFO_STREAM_THROTTLE(get_logger(), *get_clock(), 1000, "Navigation state: " << to_string(state_));
 
     std_msgs::msg::String msg;
-    msg.data = to_string(state_);
+    msg.data = toupper(to_string(state_));
     status_publisher_->publish(msg);
   }
   //}
@@ -1403,12 +1409,6 @@ namespace navigation
   // | -------------- Publish/visualization methods ------------- |
 
   /* publishDiagnostics //{ */
-  std::string toupper(std::string s)
-  {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::toupper(c); });
-    return s;
-  }
-
   void Navigation::publishDiagnostics()
   {
     fog_msgs::msg::NavigationDiagnostics msg;
