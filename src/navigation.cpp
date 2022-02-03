@@ -208,7 +208,6 @@ namespace navigation
     void bumperCallback(const fog_msgs::msg::ObstacleSectors::UniquePtr msg);
 
     // services provided
-    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr goto_trigger_service_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr hover_service_;
 
     rclcpp::Service<fog_msgs::srv::Vec4>::SharedPtr local_waypoint_service_;
