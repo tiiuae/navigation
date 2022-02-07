@@ -254,6 +254,7 @@ namespace navigation
     void publishFutureTrajectory(const std::vector<vec4_t>& waypoints);
 
     // bumper
+    bool bumperDataOld(const fog_msgs::msg::ObstacleSectors::SharedPtr bumper_msg);
     bool bumperCheckObstacles(const fog_msgs::msg::ObstacleSectors::SharedPtr bumper_msg);
     vec3_t bumperGetAvoidanceVector(const fog_msgs::msg::ObstacleSectors::SharedPtr bumper_msg);
 
@@ -883,12 +884,12 @@ namespace navigation
     const auto bumper_msg = get_mutexed(bumper_mutex_, bumper_msg_);
     if (bumper_enabled_)
     {
-      const bool bumper_data_old = bumper_msg == nullptr || (get_clock()->now() - bumper_msg->header.stamp).seconds() > 1.0;
-      if (state_ != nav_state_t::idle && bumper_data_old)
+      const bool bumper_data_old = bumperDataOld(bumper_msg);
+      if (state_ != nav_state_t::not_ready && bumper_data_old)
       {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Missing fresh bumper data calling hover and switching to idle.");
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Missing fresh bumper data calling hover and switching to not_ready.");
         hover();
-        state_ = nav_state_t::idle;
+        state_ = nav_state_t::not_ready;
         return;
       }
 
@@ -911,6 +912,8 @@ namespace navigation
     const bool getting_octomap = get_mutexed(octree_mutex_, getting_octomap_);
     const bool getting_uav_pose = get_mutexed(uav_pose_mutex_, getting_uav_pose_);
     const bool getting_cmd_pose = get_mutexed(cmd_pose_mutex_, getting_cmd_pose_);
+    const auto bumper_msg = get_mutexed(bumper_mutex_, bumper_msg_);
+    const bool bumper_ok = !bumper_enabled_ || !bumperDataOld(bumper_msg);
     const auto [control_vehicle_state, getting_control_diagnostics] = get_mutexed(control_diags_mutex_, control_vehicle_state_, getting_control_diagnostics_);
 
     if (is_initialized_
@@ -918,6 +921,7 @@ namespace navigation
      && getting_control_diagnostics
      && getting_uav_pose
      && getting_cmd_pose
+     && bumper_ok
      && control_vehicle_state == vehicle_state_t::autonomous_flight)
     {
       state_ = nav_state_t::idle;
@@ -930,6 +934,7 @@ namespace navigation
       add_reason_if("missing control diagnostics", !getting_control_diagnostics, reasons);
       add_reason_if("missing uav pose", !getting_uav_pose, reasons);
       add_reason_if("missing cmd pose", !getting_cmd_pose, reasons);
+      add_reason_if("missing bumper data", !bumper_ok, reasons);
       add_reason_if("vehicle not in autonomous mode", control_vehicle_state != vehicle_state_t::autonomous_flight, reasons);
       RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1000, "Not initialized: " << reasons);
     }
@@ -1273,6 +1278,13 @@ namespace navigation
     }
   
     return {planned_path, goal_reached};
+  }
+  //}
+
+  /* bumperDataOld() method //{ */
+  bool Navigation::bumperDataOld(const fog_msgs::msg::ObstacleSectors::SharedPtr bumper_msg)
+  {
+    return bumper_msg == nullptr || (get_clock()->now() - bumper_msg->header.stamp).seconds() > 1.0;
   }
   //}
 
