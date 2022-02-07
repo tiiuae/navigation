@@ -249,8 +249,8 @@ namespace navigation
     void publishFutureTrajectory(const std::vector<vec4_t>& waypoints);
 
     // bumper
-    bool bumperCheckObstacles(const fog_msgs::msg::ObstacleSectors& bumper_msg);
-    vec3_t bumperGetAvoidanceVector(const fog_msgs::msg::ObstacleSectors& bumper_msg);
+    bool bumperCheckObstacles(const fog_msgs::msg::ObstacleSectors::SharedPtr bumper_msg);
+    vec3_t bumperGetAvoidanceVector(const fog_msgs::msg::ObstacleSectors::SharedPtr bumper_msg);
 
     std_msgs::msg::ColorRGBA generateColor(const double r, const double g, const double b, const double a);
 
@@ -740,6 +740,11 @@ namespace navigation
   /* waypointFutureCallback //{ */
   void Navigation::waypointFutureCallback(rclcpp::Client<fog_msgs::srv::WaypointToLocal>::SharedFuture future)
   {
+    if (!future_ready(future))
+    {
+      RCLCPP_ERROR_STREAM(get_logger(), "Failed to call service to transform waypoint.");
+      return;
+    }
     const std::shared_ptr<fog_msgs::srv::WaypointToLocal_Response> result = future.get();
     if (result == nullptr)
     {
@@ -768,6 +773,11 @@ namespace navigation
   /* pathFutureCallback //{ */
   void Navigation::pathFutureCallback(rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedFuture future)
   {
+    if (!future_ready(future))
+    {
+      RCLCPP_ERROR_STREAM(get_logger(), "Failed to call service to transform waypoint.");
+      return;
+    }
     const std::shared_ptr<fog_msgs::srv::PathToLocal_Response> result = future.get();
     if (result == nullptr)
     {
@@ -877,9 +887,9 @@ namespace navigation
         return;
       }
 
-      if (state_ != nav_state_t::avoiding)
+      if (state_ != nav_state_t::avoiding && !bumper_data_old)
       {
-        const bool obstacle_detected = bumperCheckObstacles(*bumper_msg);
+        const bool obstacle_detected = bumperCheckObstacles(bumper_msg);
         if (obstacle_detected)
         {
           RCLCPP_WARN(get_logger(), "Obstacle detected! Switching to avoiding.");
@@ -1103,7 +1113,7 @@ namespace navigation
     last_replan = get_clock()->now();
 
     const auto bumper_msg = get_mutexed(bumper_mutex_, bumper_msg_);
-    const vec3_t avoidance_vector = bumperGetAvoidanceVector(*bumper_msg);
+    const vec3_t avoidance_vector = bumperGetAvoidanceVector(bumper_msg);
     if (avoidance_vector.norm() == 0)
     {
       RCLCPP_INFO(get_logger(), "Nothing to avoid, switching to idle");
@@ -1262,16 +1272,20 @@ namespace navigation
   //}
 
   /* bumperCheckObstacles //{ */
-  bool Navigation::bumperCheckObstacles(const fog_msgs::msg::ObstacleSectors& bumper_msg)
+  bool Navigation::bumperCheckObstacles(const fog_msgs::msg::ObstacleSectors::SharedPtr bumper_msg)
   {
-    for (int i = 0; i < int(bumper_msg.n_horizontal_sectors); i++)
+    // no info available
+    if (bumper_msg == nullptr)
+      return true;
+
+    for (int i = 0; i < int(bumper_msg->n_horizontal_sectors); i++)
     {
       // no reading available - skip it
-      if (bumper_msg.sectors.at(i) < 0)
+      if (bumper_msg->sectors.at(i) < 0)
         continue;
 
       // if the sector is below the safe distance
-      if (bumper_msg.sectors.at(i) <= safe_obstacle_distance_ * bumper_distance_factor_)
+      if (bumper_msg->sectors.at(i) <= safe_obstacle_distance_ * bumper_distance_factor_)
         return true;
     }
     return false;
@@ -1279,20 +1293,24 @@ namespace navigation
   //}
 
   /* bumperGetAvoidanceVector//{ */
-  vec3_t Navigation::bumperGetAvoidanceVector(const fog_msgs::msg::ObstacleSectors& bumper_msg)
+  vec3_t Navigation::bumperGetAvoidanceVector(const fog_msgs::msg::ObstacleSectors::SharedPtr bumper_msg)
   {
+    // no info available
+    if (bumper_msg == nullptr)
+      return vec3_t::Zero();
+
     const vec4_t uav_pose = get_mutexed(uav_pose_mutex_, uav_pose_);
-    const double sector_size = (2.0 * M_PI) / double(bumper_msg.n_horizontal_sectors);
+    const double sector_size = (2.0 * M_PI) / double(bumper_msg->n_horizontal_sectors);
     const vec3_t forward = vec3_t::UnitX();
-    for (int i = 0; i < int(bumper_msg.n_horizontal_sectors); i++)
+    for (int i = 0; i < int(bumper_msg->n_horizontal_sectors); i++)
     {
-      if (bumper_msg.sectors.at(i) < 0)
+      if (bumper_msg->sectors.at(i) < 0)
         continue;
 
-      if (bumper_msg.sectors.at(i) <= safe_obstacle_distance_ * bumper_distance_factor_)
+      if (bumper_msg->sectors.at(i) <= safe_obstacle_distance_ * bumper_distance_factor_)
       {
         const anax_t rot(sector_size*i + M_PI + uav_pose.w(), vec3_t::UnitZ());
-        const vec3_t avoidance_vector = rot * ((safe_obstacle_distance_ - bumper_msg.sectors.at(i) + planning_tree_resolution_) * forward);
+        const vec3_t avoidance_vector = rot * ((safe_obstacle_distance_ - bumper_msg->sectors.at(i) + planning_tree_resolution_) * forward);
         return avoidance_vector;
       }
     }
