@@ -46,7 +46,6 @@ def generate_launch_description():
                     ("~/cmd_pose_in", "/" + DRONE_DEVICE_ID + "/control_interface/cmd_pose"),
                     ("~/hover_in", "~/hover"),
                     ("~/goto_in", "~/goto_waypoints"),
-                    ("~/goto_trigger_in", "~/goto_trigger"),
                     ("~/control_diagnostics_in",  "/" + DRONE_DEVICE_ID + "/control_interface/diagnostics"),
                     ("~/bumper_in",  "/" + DRONE_DEVICE_ID + "/bumper/obstacle_sectors"),
 
@@ -54,8 +53,9 @@ def generate_launch_description():
                     ("~/local_path_in", "~/local_path"),
                     ("~/gps_waypoint_in", "~/gps_waypoint"),
                     ("~/gps_path_in", "~/gps_path"),
-
                     ("~/diagnostics_out", "~/diagnostics"),
+
+                    ("~/status_out", "~/status_out"), #needs to be named as status_out due to mission-engine plugin
                     ("~/future_trajectory_out", "~/future_trajectory"),
 
                     ("~/binary_tree_markers_out", "~/visualization/binary_tree_markers"),
