@@ -837,6 +837,8 @@ void Navigation::navigationRoutine(void) {
 
         if (waypoint_in_buffer_.empty() || (current_waypoint_id_) >= waypoint_in_buffer_.size()) {
           RCLCPP_WARN(this->get_logger(), "[%s]: No navigation goals available. Switching to IDLE", this->get_name());
+          waypoint_in_buffer_.clear();
+          current_waypoint_id_ = 0;
           status_ = IDLE;
           break;
         }
@@ -856,6 +858,9 @@ void Navigation::navigationRoutine(void) {
                        "[%s]: No waypoint produced after %d repeated attempts. "
                        "Please provide a new waypoint",
                        this->get_name(), replanning_counter_);
+          waypoint_in_buffer_.clear();
+          current_waypoint_id_ = 0;
+          replanning_counter_ = 0;
           status_ = IDLE;
           waypoint_status_ = UNREACHABLE;
         }
@@ -888,6 +893,8 @@ void Navigation::navigationRoutine(void) {
           waypoint_status_ = REACHED;
           if (current_waypoint_id_ >= waypoint_in_buffer_.size()) {
             RCLCPP_INFO(this->get_logger(), "[%s]: The last provided navigation goal has been visited. Switching to IDLE", this->get_name());
+            waypoint_in_buffer_.clear();
+            current_waypoint_id_ = 0;
             status_ = IDLE;
             break;
 
@@ -1248,6 +1255,8 @@ std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPathSrv(con
 
 /* hover //{ */
 void Navigation::hover() {
+  waypoint_in_buffer_.clear();
+  current_waypoint_id_ = 0;
   std::vector<Eigen::Vector4d> waypoints;
   waypoints.push_back(desired_pose_);
   auto waypoints_srv = waypointsToPathSrv(waypoints, true);
