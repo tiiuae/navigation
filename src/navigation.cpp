@@ -474,7 +474,7 @@ namespace navigation
     const auto vehicle_state = control_interface::to_enum(msg->vehicle_state);
     const auto mission_state = control_interface::to_enum(msg->mission_state);
     set_mutexed(control_diags_mutex_,
-        std::make_tuple(vehicle_state, mission_state, true, msg->mission_id),
+        std::make_tuple(vehicle_state, mission_state, true, msg->mission_progress.mission_id),
         std::forward_as_tuple(control_vehicle_state_, control_mission_state_, getting_control_diagnostics_, control_response_id_)
       );
     RCLCPP_INFO_ONCE(get_logger(), "Getting control_interface diagnostics");
