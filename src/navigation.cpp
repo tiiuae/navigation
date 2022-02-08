@@ -1089,6 +1089,10 @@ namespace navigation
   /* state_navigation_avoiding() method //{ */
   void Navigation::state_navigation_avoiding()
   {
+    const bool waypoints_left = waypoints_in_.empty() && waypoint_current_it_ < waypoints_in_.size();
+    // to which state to revert if avoidance is done
+    const nav_state_t reset_state = waypoints_left ? nav_state_t::idle : nav_state_t::planning;
+
     // if there is already a request sent, check if it was processed already
     if (local_path_future_.valid())
     {
@@ -1098,16 +1102,18 @@ namespace navigation
         // not sure if this can even happen - ROS2 documentation on this is empty...
         if (resp_ptr == nullptr)
         {
-          RCLCPP_WARN(get_logger(), "Failed to call local path service of control interface! Deleting waypoints and switching state to idle.");
+          RCLCPP_WARN_STREAM(get_logger(), "Failed to call local path service of control interface! Deleting waypoints and switching state to " << to_string(reset_state) << ".");
           hover();
-          state_ = nav_state_t::idle;
+          state_ = reset_state;
+          return;
         }
         // this may happen, but we can't do much - control interface is probably not ready or something
         else if (!resp_ptr->success)
         {
-          RCLCPP_WARN_STREAM(get_logger(), "Failed to set local path to control interface! Deleting waypoints and switching state to idle. Reason: " << resp_ptr->message);
+          RCLCPP_WARN_STREAM(get_logger(), "Failed to set local path to control interface! Deleting waypoints and switching state to " << to_string(reset_state) << ". Reason: " << resp_ptr->message);
           hover();
-          state_ = nav_state_t::idle;
+          state_ = reset_state;
+          return;
         }
       }
       // if the previous service call is not processed yet, do nothing
@@ -1126,8 +1132,8 @@ namespace navigation
     const vec3_t avoidance_vector = bumperGetAvoidanceVector(bumper_msg);
     if (avoidance_vector.norm() == 0)
     {
-      RCLCPP_INFO(get_logger(), "Nothing to avoid, switching to idle");
-      state_ = nav_state_t::idle;
+      RCLCPP_INFO_STREAM(get_logger(), "Nothing to avoid, switching to " << to_string(reset_state) << ".");
+      state_ = reset_state;
       return;
     }
 
