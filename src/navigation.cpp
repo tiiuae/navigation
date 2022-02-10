@@ -1216,11 +1216,12 @@ namespace navigation
         path_valid = true;
         if (path.size() > 1)
         {
-          const vec3_t w_start = to_eigen(path.front());
-          const vec3_t w_end = to_eigen(path.back());
-          const double path_start_end_dist = (w_end - w_start).norm();
+          double path_dist = 0.0;
+          for (size_t i = 1; i < path.size(); i++){
+            path_dist += (path[i] - path[i-1]).norm();
+          }
           // use sradians::dist instead of std::abs to correctly compare two cyclic values in range [-pi, pi]
-          if (path_start_end_dist < planning_tree_resolution_)
+          if (path_dist < planning_tree_resolution_)
           {
             if (sradians::dist(uav_pose.w(), goal.w()) > max_heading_step_)
             {
