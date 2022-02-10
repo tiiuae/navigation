@@ -636,14 +636,6 @@ namespace navigation
   bool Navigation::localWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Vec4::Request> request,
                                          std::shared_ptr<fog_msgs::srv::Vec4::Response> response)
   {
-    if (request->goal.size() != 4)
-    {
-      response->message = "The waypoint must have 4 coordinates (x, y, z, heading)! Ignoring request.";
-      response->success = false;
-      RCLCPP_ERROR_STREAM(get_logger(), response->message);
-      return true;
-    }
-
     const auto state = get_mutexed(state_mutex_, state_);
     if (state == nav_state_t::not_ready)
     {
@@ -679,14 +671,6 @@ namespace navigation
   bool Navigation::gpsWaypointCallback([[maybe_unused]] const std::shared_ptr<fog_msgs::srv::Vec4::Request> request,
                                        std::shared_ptr<fog_msgs::srv::Vec4::Response> response)
   {
-    if (request->goal.size() != 4)
-    {
-      response->message = "The waypoint must have 4 coordinates (x, y, z, heading)! Ignoring request.";
-      response->success = false;
-      RCLCPP_ERROR_STREAM(get_logger(), response->message);
-      return true;
-    }
-
     const auto state = get_mutexed(state_mutex_, state_);
     if (state == nav_state_t::not_ready)
     {
