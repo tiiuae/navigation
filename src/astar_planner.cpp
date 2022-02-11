@@ -98,6 +98,35 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
     return {std::vector<octomap::point3d>(), FAILURE};
   }
 
+  /* check if planning start is in octomap //{ */
+  const auto start_query = tree_with_tunnel->first.search(start_coord);
+  if (start_query == nullptr){
+
+    RCLCPP_INFO(logger_,"[Astar]: Start is outside of map, creating a temporary goal to force vertical movement");
+    octomap::point3d temp_goal;
+    temp_goal.x() = start_coord.x();
+    temp_goal.y() = start_coord.y();
+    temp_goal.z() = start_coord.z() + planning_tree_resolution;
+
+    if (temp_goal.z() > max_altitude) {
+      RCLCPP_INFO(logger_,"[Astar]: capping at max altitude");
+      temp_goal.z() = max_altitude;
+    }
+    if (temp_goal.z() < min_altitude) {
+      RCLCPP_INFO(logger_,"[Astar]: capping at min altitude");
+      temp_goal.z() = min_altitude;
+    }
+
+    RCLCPP_INFO(logger_,"[Astar]: Generated a temporary goal: [%.2f, %.2f, %.2f]", start_coord.x(), start_coord.y(), start_coord.z());
+
+    std::vector<octomap::point3d> vertical_path;
+    vertical_path.push_back(start_coord);
+    vertical_path.push_back(temp_goal);
+    vertical_path.push_back(start_coord);
+    return {vertical_path, INCOMPLETE};
+  }
+  //}
+
   visualizeTree((*tree_with_tunnel).first);
 
   auto tree   = tree_with_tunnel.value().first;
@@ -569,6 +598,10 @@ std::pair<octomap::point3d, bool> AstarPlanner::generateTemporaryGoal(const octo
   for (auto it = tree.begin_leafs(); it != tree.end_leafs(); it++) {
 
     if (it->getValue() == TreeValue::OCCUPIED) {
+      continue;
+    }
+
+    if(it.getZ() > max_altitude || it.getZ() < min_altitude){
       continue;
     }
 
