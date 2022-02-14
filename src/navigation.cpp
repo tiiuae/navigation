@@ -53,6 +53,8 @@
 #include <fog_lib/geometry/cyclic.h>
 #include <fog_lib/geometry/misc.h>
 
+#include <navigation/enums.h>
+
 //}
 
 using namespace std::placeholders;
@@ -111,27 +113,12 @@ namespace navigation
     std::shared_ptr<fog_msgs::msg::ObstacleSectors> bumper_msg_ = nullptr;
 
     std::shared_mutex state_mutex_;
-    enum nav_state_t
-    {
-      not_ready,
-      idle,
-      planning,
-      commanding,
-      moving,
-      avoiding
-    } state_ = nav_state_t::not_ready;
+    nav_state_t state_ = nav_state_t::not_ready;
 
     std::mutex waypoints_mutex_;
     std::deque<vec4_t> waypoints_in_;
     size_t waypoint_current_it_ = 0;
-    vec4_t waypoint_current_ = vec4_t(nand, nand, nand, nand);
-    enum waypoint_state_t
-    {
-      empty = 0,
-      ongoing,
-      reached,
-      unreachable
-    } waypoint_state_ = waypoint_state_t::empty;
+    waypoint_state_t waypoint_state_ = waypoint_state_t::empty;
     int replanning_counter_ = 0;
 
     rclcpp::TimerBase::SharedPtr execution_timer_;
@@ -830,6 +817,11 @@ namespace navigation
       case nav_state_t::avoiding:
         state_navigation_avoiding();
         break;
+
+      default:
+        assert(false && "Invalid state, this should never happen!");
+        RCLCPP_ERROR(get_logger(), "Invalid state, this should never happen!");
+        return;
     }
 
     RCLCPP_INFO_STREAM_THROTTLE(get_logger(), *get_clock(), 1000, "Navigation state: " << to_string(state_));
@@ -963,7 +955,6 @@ namespace navigation
   
     // if we got here, let's plan!
     const vec4_t goal = waypoints_in_.at(waypoint_current_it_);
-    waypoint_current_ = goal;
   
     RCLCPP_INFO_STREAM(get_logger(), "Waypoint " << goal.transpose() << " set as the next goal #" << waypoint_current_it_ << "/" << waypoints_in_.size() << ".");
   
@@ -1432,19 +1423,32 @@ namespace navigation
   // | -------------- Publish/visualization methods ------------- |
 
   /* publishDiagnostics //{ */
+  // the caller must lock the following muteces:
+  // state_mutex_
+  // octree_mutex_
+  // waypoints_mutex_
   void Navigation::publishDiagnostics()
   {
     fog_msgs::msg::NavigationDiagnostics msg;
     msg.header.stamp = get_clock()->now();
-    msg.header.frame_id = get_mutexed(octree_mutex_, octree_frame_);
-    msg.state = toupper(to_string(state_));
-    msg.current_waypoint_status = toupper(to_string(waypoint_state_));
-    msg.waypoints_in_buffer = waypoints_in_.size();
-    msg.bumper_active = state_ == nav_state_t::avoiding;
-    msg.current_waypoint_id = waypoint_current_it_;
-    msg.current_nav_goal.at(0) = waypoint_current_.x();
-    msg.current_nav_goal.at(1) = waypoint_current_.y();
-    msg.current_nav_goal.at(2) = waypoint_current_.z();
+    msg.header.frame_id = octree_frame_;
+    msg.state = to_msg(state_);
+    msg.waypoints_total = waypoints_in_.size();
+
+    msg.waypoint_state = to_msg(waypoint_state_);
+    msg.waypoint_id = waypoint_current_it_;
+    if (waypoints_in_.size() > waypoint_current_it_)
+    {
+      msg.waypoint.x = waypoints_in_.at(waypoint_current_it_).x();
+      msg.waypoint.y = waypoints_in_.at(waypoint_current_it_).y();
+      msg.waypoint.z = waypoints_in_.at(waypoint_current_it_).z();
+    }
+    else
+    {
+      msg.waypoint.x = nand;
+      msg.waypoint.y = nand;
+      msg.waypoint.z = nand;
+    }
     diagnostics_publisher_->publish(msg);
   }
   //}
@@ -1708,34 +1712,6 @@ namespace navigation
     p.y() = (float)vec.y();
     p.z() = (float)vec.z();
     return p;
-  }
-  //}
-
-  /* to_string() method //{ */
-  std::string Navigation::to_string(const nav_state_t state) const
-  {
-    switch (state)
-    {
-      case nav_state_t::not_ready: return "not_ready";
-      case nav_state_t::idle: return "idle";
-      case nav_state_t::planning: return "planning";
-      case nav_state_t::commanding: return "commanding";
-      case nav_state_t::moving: return "moving";
-      case nav_state_t::avoiding: return "avoiding";
-    }
-    return "unknown";
-  }
-  
-  std::string Navigation::to_string(const waypoint_state_t state) const
-  {
-    switch (state)
-    {
-      case waypoint_state_t::empty: return "empty";
-      case waypoint_state_t::ongoing: return "ongoing";
-      case waypoint_state_t::reached: return "reached";
-      case waypoint_state_t::unreachable: return "unreachable";
-    }
-    return "unknown";
   }
   //}
 
