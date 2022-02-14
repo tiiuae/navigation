@@ -14,6 +14,7 @@ planning:
   max_yaw_step: 0.1 # [rad]
   planning_timeout: 4.5 # [s]
   replanning_limit: 3 # number of repeated attempts
+  waypoint_replanning_limit: 5 # If it tries to go same waypoint more than this times, it will give up
   replanning_distance: 15.0 # [m] Euclidean distance from first waypoint
   override_previous_commands: true # new GOTO will override all previous actions
   main_update_rate: 10.0 # [Hz] 

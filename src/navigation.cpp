@@ -105,7 +105,8 @@ private:
   bool bumper_active_               = false;
 
   std::string parent_frame_;
-  int         replanning_counter_ = 0;
+  int replanning_counter_           = 0;
+  int waypoint_replanning_counter_    = 0;
 
   bool control_moving_  = false;
   bool goal_reached_    = false;
@@ -125,6 +126,7 @@ private:
   std::vector<Eigen::Vector4d> waypoint_out_buffer_;
   std::deque<Eigen::Vector4d>  waypoint_in_buffer_;
   size_t                       current_waypoint_id_;
+  size_t                       previous_waypoint_id_;
 
   rclcpp::CallbackGroup::SharedPtr callback_group_;
   rclcpp::TimerBase::SharedPtr     execution_timer_;
@@ -148,6 +150,7 @@ private:
   double max_yaw_step_;
   double planning_timeout_;
   int    replanning_limit_;
+  int    waypoint_replanning_limit_;
   double replanning_distance_;
   double main_update_rate_;
   bool   bumper_enabled_;
@@ -263,6 +266,7 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   loaded_successfully &= parse_param("planning.max_yaw_step", max_yaw_step_);
   loaded_successfully &= parse_param("planning.planning_timeout", planning_timeout_);
   loaded_successfully &= parse_param("planning.replanning_limit", replanning_limit_);
+  loaded_successfully &= parse_param("planning.waypoint_replanning_limit", waypoint_replanning_limit_);
   loaded_successfully &= parse_param("planning.replanning_distance", replanning_distance_);
   loaded_successfully &= parse_param("planning.override_previous_commands", override_previous_commands_);
   loaded_successfully &= parse_param("planning.main_update_rate", main_update_rate_);
@@ -286,6 +290,9 @@ Navigation::Navigation(rclcpp::NodeOptions options) : Node("navigation", options
   //}
 
   current_waypoint_id_ = 0;
+  previous_waypoint_id_ = 0;
+
+
   bumper_msg_.reset();
 
   callback_group_        = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
@@ -450,6 +457,8 @@ void Navigation::gotoCallback(const nav_msgs::msg::Path::UniquePtr msg) {
 
   waypoint_in_buffer_.clear();
   current_waypoint_id_ = 0;
+  previous_waypoint_id_ = 0;
+  waypoint_replanning_counter_ = 0;
   for (const auto &p : msg->poses) {
     Eigen::Vector4d point;
     point[0] = p.pose.position.x;
@@ -556,6 +565,8 @@ bool Navigation::localPathCallback([[maybe_unused]] const std::shared_ptr<fog_ms
 
   waypoint_in_buffer_.clear();
   current_waypoint_id_ = 0;
+  previous_waypoint_id_ = 0;
+  waypoint_replanning_counter_ = 0;
   for (const auto &p : request->path.poses) {
     Eigen::Vector4d point;
     point[0] = p.pose.position.x;
@@ -665,6 +676,8 @@ bool Navigation::localWaypointCallback([[maybe_unused]] const std::shared_ptr<fo
 
   waypoint_in_buffer_.clear();
   current_waypoint_id_ = 0;
+  previous_waypoint_id_ = 0;
+  waypoint_replanning_counter_ = 0;
   Eigen::Vector4d point;
   point[0] = request->goal[0];
   point[1] = request->goal[1];
@@ -839,6 +852,8 @@ void Navigation::navigationRoutine(void) {
           RCLCPP_WARN(this->get_logger(), "[%s]: No navigation goals available. Switching to IDLE", this->get_name());
           waypoint_in_buffer_.clear();
           current_waypoint_id_ = 0;
+          previous_waypoint_id_ = 0;
+          waypoint_replanning_counter_ = 0;
           status_ = IDLE;
           break;
         }
@@ -853,14 +868,18 @@ void Navigation::navigationRoutine(void) {
 
         visualizeGoals(waypoint_in_buffer_);
 
-        if (replanning_counter_ >= replanning_limit_) {
+        if (replanning_counter_ >= replanning_limit_ || 
+          waypoint_replanning_counter_ >= waypoint_replanning_limit_) {
+          // We check limit-1 for waypoint, because first one is not counted
           RCLCPP_ERROR(this->get_logger(),
-                       "[%s]: No waypoint produced after %d repeated attempts. "
+                       "[%s]: Discarding waypoint %d repeated attempts. "
                        "Please provide a new waypoint",
-                       this->get_name(), replanning_counter_);
+                       this->get_name(), (replanning_counter_>0) ? replanning_counter_ : waypoint_replanning_limit_);
           waypoint_in_buffer_.clear();
           current_waypoint_id_ = 0;
+          previous_waypoint_id_ = 0;
           replanning_counter_ = 0;
+          waypoint_replanning_counter_ = 0;
           status_ = IDLE;
           waypoint_status_ = UNREACHABLE;
         }
@@ -895,6 +914,8 @@ void Navigation::navigationRoutine(void) {
             RCLCPP_INFO(this->get_logger(), "[%s]: The last provided navigation goal has been visited. Switching to IDLE", this->get_name());
             waypoint_in_buffer_.clear();
             current_waypoint_id_ = 0;
+            previous_waypoint_id_ = 0;
+            waypoint_replanning_counter_ = 0;
             status_ = IDLE;
             break;
 
@@ -909,6 +930,7 @@ void Navigation::navigationRoutine(void) {
         /* COMPLETE //{ */
         if (waypoints.second == COMPLETE) {
           replanning_counter_ = 0;
+          waypoint_replanning_counter_ = 0;
         }
         //}
 
@@ -1037,7 +1059,13 @@ void Navigation::navigationRoutine(void) {
             }
           }
         }
-
+        // Count how many times the same point have been used as goal, check in planning loop
+        if (current_waypoint_id_ == previous_waypoint_id_){
+          waypoint_replanning_counter_++;
+        } else {
+          waypoint_replanning_counter_ = 0;
+          previous_waypoint_id_ = current_waypoint_id_;
+        }
         replanning_counter_ = 0;
         publishFutureTrajectory(waypoint_out_buffer_);
         {
@@ -1257,6 +1285,8 @@ std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPathSrv(con
 void Navigation::hover() {
   waypoint_in_buffer_.clear();
   current_waypoint_id_ = 0;
+  previous_waypoint_id_ = 0;
+  waypoint_replanning_counter_ = 0;
   std::vector<Eigen::Vector4d> waypoints;
   waypoints.push_back(desired_pose_);
   auto waypoints_srv = waypointsToPathSrv(waypoints, true);
