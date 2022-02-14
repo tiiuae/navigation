@@ -525,18 +525,21 @@ namespace navigation
 
       if (point.z() < min_altitude_)
       {
+        fail_reason_out = "path is below min. altitude";
         RCLCPP_WARN(get_logger(), "Goal Z coordinate (%.2f) is below the minimum allowed altitude (%.2f), not adding further waypoints", point.z(), min_altitude_);
         break;
       }
 
       if (point.z() > max_altitude_)
       {
+        fail_reason_out = "path is above max. altitude";
         RCLCPP_WARN(get_logger(), "Goal Z coordinate (%.2f) is above the maximum allowed altitude (%.2f), not adding further waypoints", point.z(), max_altitude_);
         break;
       }
 
       if ((point.head<3>() - cmd_pose.head<3>()).norm() > max_goal_distance_)
       {
+        fail_reason_out = "path beyond the max. goal distance";
         RCLCPP_WARN(get_logger(), "Distance to goal (%.2f) exceeds the maximum allowed distance (%.2f m), not adding further waypoints", (point.head<3>() - cmd_pose.head<3>()).norm(), max_goal_distance_);
         break;
       }
