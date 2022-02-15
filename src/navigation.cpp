@@ -247,9 +247,6 @@ namespace navigation
 
     std_msgs::msg::ColorRGBA generateColor(const double r, const double g, const double b, const double a);
 
-    std::string to_string(const nav_state_t state) const;
-    std::string to_string(const waypoint_state_t state) const;
-
     std::vector<rclcpp::CallbackGroup::SharedPtr> callback_groups_;
     rclcpp::CallbackGroup::SharedPtr new_cbk_grp();
   };
