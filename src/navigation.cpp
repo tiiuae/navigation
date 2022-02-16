@@ -501,18 +501,17 @@ namespace navigation
   {
     std::scoped_lock lock(state_mutex_, waypoints_mutex_);
     size_t added = 0;
-    if (state_ != nav_state_t::idle)
+
+    if (state_ == nav_state_t::not_ready)
     {
-      if (override && state_ != nav_state_t::not_ready)
-      {
-        RCLCPP_INFO(get_logger(), "Overriding previous navigation commands");
-        hover(); // clears previous waypoints and commands the drone to the cmd_pose_, which should stop it
-      }
-      else
-      {
-        fail_reason_out = "not idle! Current state is: " + to_string(state_);
-        return added;
-      }
+      fail_reason_out = "not ready!";
+      return added;
+    }
+
+    if (state_ != nav_state_t::idle && override)
+    {
+      RCLCPP_INFO(get_logger(), "Overriding previous navigation commands");
+      hover(); // clears previous waypoints and commands the drone to the cmd_pose_, which should stop it
     }
 
     const vec4_t cmd_pose = get_mutexed(cmd_pose_mutex_, cmd_pose_);
@@ -981,7 +980,7 @@ namespace navigation
     const vec4_t goal = waypoints_in_.at(waypoint_current_it_);
     waypoint_current_ = goal;
   
-    RCLCPP_INFO_STREAM(get_logger(), "Waypoint " << goal.transpose() << " set as the next goal #" << waypoint_current_it_ << "/" << waypoints_in_.size() << ".");
+    RCLCPP_INFO_STREAM(get_logger(), "Waypoint " << goal.transpose() << " set as the next goal #" << waypoint_current_it_+1 << "/" << waypoints_in_.size() << ".");
   
     visualizeGoals(waypoints_in_);
 
@@ -1007,7 +1006,7 @@ namespace navigation
         // if it was not the final goal, let's go to the next goal
         else
         {
-          RCLCPP_INFO(get_logger(), "Navigation goal #%lu/%lu visited, continuing.", waypoint_current_it_, waypoints_in_.size());
+          RCLCPP_INFO(get_logger(), "Navigation goal #%lu/%lu visited, continuing.", waypoint_current_it_+1, waypoints_in_.size());
           waypoint_current_it_++;
         }
       }
