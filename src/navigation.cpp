@@ -1048,7 +1048,8 @@ namespace navigation
     const auto [control_mission_state, command_id, response_id] = get_mutexed(control_diags_mutex_, control_mission_state_, control_command_id_, control_response_id_);
 
     replanning_counter_ = 0;
-    if (control_mission_state == mission_state_t::finished)
+    // check if control interface is done moving
+    if (control_mission_state == mission_state_t::finished || control_mission_state == mission_state_t::stopped)
     {
       if (response_id == command_id)
       {
