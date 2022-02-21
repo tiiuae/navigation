@@ -78,19 +78,7 @@ rclcpp_components_register_nodes(navigation PLUGIN "${PROJECT_NAME}::Navigation"
 ## |                           install                          |
 ## --------------------------------------------------------------
 
-install(TARGETS
-  navigation
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
-  RUNTIME DESTINATION bin
-  # DESTINATION lib/${PROJECT_NAME}
-)
-
 ament_export_include_directories(include)
-
-# install(DIRECTORY include
-#   DESTINATION include
-# )
 
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
@@ -98,6 +86,19 @@ install(DIRECTORY launch
 
 install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
+)
+
+install(
+  DIRECTORY include/
+  DESTINATION include
+)
+
+install(TARGETS
+  navigation
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+  INCLUDES DESTINATION include
 )
 
 ament_package()
