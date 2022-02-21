@@ -31,6 +31,7 @@ find_package(octomap_msgs REQUIRED)
 find_package(dynamicEDT3D REQUIRED)
 find_package(fog_lib REQUIRED)
 find_package(control_interface REQUIRED)
+find_package(rclcpp_action REQUIRED)
 
 include_directories(
   include
@@ -67,6 +68,7 @@ ament_target_dependencies(navigation
   dynamicEDT3D
   fog_lib
   control_interface
+  rclcpp_action
 )
 
 target_link_libraries(navigation ${OCTOMAP_LIBRARIES} ${DYNAMICEDT3D_LIBRARIES})
