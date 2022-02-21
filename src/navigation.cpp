@@ -1049,7 +1049,7 @@ namespace navigation
 
     replanning_counter_ = 0;
     // check if control interface is done moving
-    if (control_mission_state == mission_state_t::finished || control_mission_state == mission_state_t::stopped)
+    if (!control_interface::mission_active(control_mission_state))
     {
       if (response_id == command_id)
       {
