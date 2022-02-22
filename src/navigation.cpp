@@ -75,7 +75,9 @@ namespace navigation
   using vehicle_state_t = control_interface::vehicle_state_t;
   using mission_state_t = control_interface::mission_state_t;
   using ControlAction = fog_msgs::action::ControlInterfaceAction;
+  using ControlActionClient = rclcpp_action::Client<ControlAction>;
   using ControlGoalHandle = rclcpp_action::ClientGoalHandle<ControlAction>;
+  using ControlGoalOptions = ControlActionClient::SendGoalOptions;
 
   std::string toupper(std::string s)
   {
@@ -114,9 +116,10 @@ namespace navigation
     std::atomic<bool> is_initialized_ = false;
 
     // control_interface action client
-    rclcpp_action::Client<ControlAction>::SharedPtr control_ac_ptr_;
-    ControlGoalHandle::SharedFuture control_goal_handle_future_;
-    rclcpp_action::Client<ControlAction>::SendGoalOptions control_ac_goal_options_;
+    std::mutex control_ac_mutex_;
+    ControlActionClient::SharedPtr control_ac_ptr_;
+    std::shared_future<ControlGoalHandle::SharedPtr> control_goal_handle_future_;
+    std::shared_future<ControlGoalHandle::WrappedResult> control_goal_result_future_;
 
     // bumper-related variables
     std::shared_mutex bumper_mutex_;
@@ -204,11 +207,6 @@ namespace navigation
     void controlDiagnosticsCallback(const fog_msgs::msg::ControlInterfaceDiagnostics::UniquePtr msg);
     void bumperCallback(const fog_msgs::msg::ObstacleSectors::UniquePtr msg);
 
-    // action client callbacks
-    void controlInterfaceGoalResponseCallback(ControlGoalHandle::SharedPtr goal_handle);
-    void controlInterfaceFeedbackCallback(ControlGoalHandle::SharedPtr, const std::shared_ptr<const ControlAction::Feedback> feedback);
-    void controlInterfaceResultCallback(const ControlGoalHandle::WrappedResult &result);
-
     // services provided
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr hover_service_;
 
@@ -216,8 +214,6 @@ namespace navigation
     rclcpp::Service<fog_msgs::srv::Path>::SharedPtr local_path_service_;
     rclcpp::Service<fog_msgs::srv::Vec4>::SharedPtr gps_waypoint_service_;
     rclcpp::Service<fog_msgs::srv::Path>::SharedPtr gps_path_service_;
-
-    rclcpp::Client<fog_msgs::srv::Path>::SharedPtr local_path_client_;
 
     rclcpp::Client<fog_msgs::srv::WaypointToLocal>::SharedPtr waypoint_to_local_client_;
     rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedPtr path_to_local_client_;
@@ -246,9 +242,8 @@ namespace navigation
     void visualizeGoals(const std::deque<vec4_t>& waypoints);
 
     std::vector<vec4_t> resamplePath(const std::vector<octomap::point3d>& waypoints, const double end_heading) const;
-    td::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPath(const std::vector<vec4_t>& waypoints);
-    rcl waypointsToGoal(const std::vector<vec4_t>& waypoints);
-    void startSendingWaypoints(const std::vector<vec4_t>& waypoints);
+    ControlAction::Goal waypointsToGoal(const std::vector<vec4_t>& waypoints);
+    std::shared_future<ControlGoalHandle::SharedPtr> commandWaypoints(const std::vector<vec4_t>& waypoints);
     void hover();
 
     void publishDiagnostics();
@@ -333,9 +328,16 @@ namespace navigation
     diagnostics_publisher_ = create_publisher<fog_msgs::msg::NavigationDiagnostics>("~/diagnostics_out", qos);
 
     // service clients
-    local_path_client_ = create_client<fog_msgs::srv::Path>("~/local_path_out");
     waypoint_to_local_client_ = create_client<fog_msgs::srv::WaypointToLocal>("~/waypoint_to_local_out");
     path_to_local_client_ = create_client<fog_msgs::srv::PathToLocal>("~/path_to_local_out");
+
+    // control interface action server
+    control_ac_ptr_ = rclcpp_action::create_client<ControlAction>(
+        get_node_base_interface(),
+        get_node_graph_interface(),
+        get_node_logging_interface(),
+        get_node_waitables_interface(),
+        "control_interface");
 
     // | ------------------ initialize callbacks ------------------ |
     rclcpp::SubscriptionOptions subopts;
@@ -391,21 +393,6 @@ namespace navigation
 
     if (max_waypoint_distance_ <= 0)
       max_waypoint_distance_ = replanning_distance_;
-
-    control_interface_action_client_ptr_ = rclcpp_action::create_client<ControlAction>(
-        get_node_base_interface(),
-        get_node_graph_interface(),
-        get_node_logging_interface(),
-        get_node_waitables_interface(),
-        "control_interface");
-
-    control_interface_action_client_goal_options_ = rclcpp_action::Client<ControlAction>::SendGoalOptions();
-    control_interface_action_client_goal_options_.goal_response_callback =
-      std::bind(&Navigation::controlInterfaceGoalResponseCallback, this, _1);
-    control_interface_action_client_goal_options_.feedback_callback =
-      std::bind(&Navigation::controlInterfaceFeedbackCallback, this, _1, _2);
-    control_interface_action_client_goal_options_.result_callback =
-      std::bind(&Navigation::controlInterfaceResultCallback, this, _1);
 
     is_initialized_ = true;
     RCLCPP_INFO(get_logger(), "Initialized");
@@ -500,45 +487,6 @@ namespace navigation
     const auto bumper_msg = std::make_shared<fog_msgs::msg::ObstacleSectors>(*msg);
     set_mutexed(bumper_mutex_, bumper_msg, bumper_msg_);
     RCLCPP_INFO_ONCE(get_logger(), "Getting bumper msgs");
-  }
-  //}
-
-  // | -------- control interface action client callbacks ------- |
-
-  /* controlInterfaceGoalResponseCallback //{ */
-  void Navigation::controlInterfaceGoalResponseCallback(ControlGoalHandle::SharedPtr goal_handle)
-  {
-    if (!goal_handle)
-      RCLCPP_ERROR(this->get_logger(), "Goal was rejected by server");
-    else
-      RCLCPP_INFO(this->get_logger(), "Goal accepted by server, waiting for result");
-  }
-  //}
-
-  /* controlInterfaceFeedbackCallback //{ */
-  void Navigation::controlInterfaceFeedbackCallback(ControlGoalHandle::SharedPtr, const std::shared_ptr<const ControlAction::Feedback> feedback)
-  {
-    RCLCPP_INFO(this->get_logger(), "goal feedback");
-  }
-  //}
-
-  /* controlInterfaceResultCallback //{ */
-  void Navigation::controlInterfaceResultCallback(const ControlGoalHandle::WrappedResult & result)
-  {
-    switch (result.code)
-    {
-      case rclcpp_action::ResultCode::SUCCEEDED:
-        break;
-      case rclcpp_action::ResultCode::ABORTED:
-        RCLCPP_ERROR(this->get_logger(), "Goal was aborted");
-        return;
-      case rclcpp_action::ResultCode::CANCELED:
-        RCLCPP_ERROR(this->get_logger(), "Goal was canceled");
-        return;
-      default:
-        RCLCPP_ERROR(this->get_logger(), "Unknown result code");
-        return;
-    }
   }
   //}
 
@@ -853,7 +801,7 @@ namespace navigation
   /* navigationRoutine //{ */
   void Navigation::navigationRoutine()
   {
-    std::scoped_lock lck(state_mutex_, waypoints_mutex_);
+    std::scoped_lock lck(state_mutex_, waypoints_mutex_, control_ac_mutex_);
 
     state_navigation_common();
 
@@ -1072,7 +1020,7 @@ namespace navigation
     else
     {
       replanning_counter_ = 0; // planning was successful, so reset the retry counter
-      startSendingWaypoints(planned_path); // start sending the waypoints to the command interface
+      control_goal_handle_future_ = commandWaypoints(planned_path); // send the waypoints to the command interface as a new action goal
       // change the state accordingly
       state_ = nav_state_t::commanding;
       waypoint_state_ = waypoint_state_t::ongoing;
@@ -1083,50 +1031,51 @@ namespace navigation
   /* state_navigation_commanding() method //{ */
   void Navigation::state_navigation_commanding()
   {
-    if (future_ready(local_path_future_))
+    const auto command_id = get_mutexed(control_diags_mutex_, control_command_id_);
+
+    // check if the goal was processed by control interface
+    if (!future_ready(control_goal_handle_future_))
+      return;
+
+    // check if the goal was accepted
+    const auto goal_handle = control_goal_handle_future_.get();
+    if (goal_handle == nullptr)
     {
-      const auto resp_ptr = local_path_future_.get();
-      // not sure if this can even happen - ROS2 documentation on this is empty...
-      if (resp_ptr == nullptr)
-      {
-        RCLCPP_WARN(get_logger(), "Failed to call local path service of control interface! Deleting waypoints and switching state to idle.");
-        hover();
-        state_ = nav_state_t::idle;
-      }
-      // this may happen, but we can't do much - control interface is probably not ready or something
-      else if (!resp_ptr->success)
-      {
-        RCLCPP_WARN_STREAM(get_logger(), "Failed to set local path to control interface! Deleting waypoints and switching state to idle. Reason: " << resp_ptr->message);
-        hover();
-        state_ = nav_state_t::idle;
-      }
-      // otherwise, all went well and the vehicle should be moving by this point
-      else
-      {
-        RCLCPP_INFO(get_logger(), "Set local path to control interface. Switching state to moving.");
-        state_ = nav_state_t::moving;
-      }
+      RCLCPP_WARN_STREAM(get_logger(), "Current segment goal not accepted (mission #" << command_id << "), switching to planning.");
+      state_ = nav_state_t::planning;
+      return;
     }
+
+    // if the goal was accepted, set the result future and continue to the next state
+    control_goal_result_future_ = control_ac_ptr_->async_get_result(goal_handle);
+    state_ = nav_state_t::moving;
   }
   //}
 
   /* state_navigation_moving() method //{ */
   void Navigation::state_navigation_moving()
   {
-    const auto [control_mission_state, command_id, response_id] = get_mutexed(control_diags_mutex_, control_mission_state_, control_command_id_, control_response_id_);
+    const auto command_id = get_mutexed(control_diags_mutex_, control_command_id_);
 
     replanning_counter_ = 0;
-    // check if control interface is done moving
-    if (!control_interface::mission_active(control_mission_state))
+
+    // check if the result is already available
+    if (!future_ready(control_goal_result_future_))
+      return;
+    const auto result = control_goal_result_future_.get();
+
+    switch (result.code)
     {
-      if (response_id == command_id)
-      {
-        RCLCPP_INFO_STREAM(get_logger(), "End of current segment reached (mission #" << command_id << "), switching to planning");
-        state_ = nav_state_t::planning;
-      }
-      /* else */
-      /*   RCLCPP_WARN_STREAM(get_logger(), "Different mission ended (" << response_id << ", expected " << command_id << "), ignoring"); */
+      case rclcpp_action::ResultCode::ABORTED: 
+        RCLCPP_WARN_STREAM(get_logger(), "Current segment goal aborted (mission #" << command_id << "), switching to planning."); break;
+      case rclcpp_action::ResultCode::CANCELED: 
+        RCLCPP_WARN_STREAM(get_logger(), "Current segment goal canceled (mission #" << command_id << "), switching to planning."); break;
+      case rclcpp_action::ResultCode::SUCCEEDED: 
+        RCLCPP_INFO_STREAM(get_logger(), "Current segment goal reached (mission #" << command_id << "), switching to planning."); break;
+      default:
+        RCLCPP_ERROR_STREAM(get_logger(), "Unknown goal result code: " << int8_t(result.code) << " (mission #" << command_id << "), switching to planning."); break;
     }
+    state_ = nav_state_t::planning;
   }
   //}
 
@@ -1136,34 +1085,6 @@ namespace navigation
     const bool waypoints_left = waypoints_in_.empty() && waypoint_current_it_ < waypoints_in_.size();
     // to which state to revert if avoidance is done
     const nav_state_t reset_state = waypoints_left ? nav_state_t::idle : nav_state_t::planning;
-
-    // if there is already a request sent, check if it was processed already
-    if (local_path_future_.valid())
-    {
-      if (future_ready(local_path_future_))
-      {
-        const auto resp_ptr = local_path_future_.get();
-        // not sure if this can even happen - ROS2 documentation on this is empty...
-        if (resp_ptr == nullptr)
-        {
-          RCLCPP_WARN_STREAM(get_logger(), "Failed to call local path service of control interface! Deleting waypoints and switching state to " << to_string(reset_state) << ".");
-          hover();
-          state_ = reset_state;
-          return;
-        }
-        // this may happen, but we can't do much - control interface is probably not ready or something
-        else if (!resp_ptr->success)
-        {
-          RCLCPP_WARN_STREAM(get_logger(), "Failed to set local path to control interface! Deleting waypoints and switching state to " << to_string(reset_state) << ". Reason: " << resp_ptr->message);
-          hover();
-          state_ = reset_state;
-          return;
-        }
-      }
-      // if the previous service call is not processed yet, do nothing
-      else
-        return;
-    }
 
     // only replan if at least bumper_min_replan_period_ duration has elapsed since the last replan
     static rclcpp::Time last_replan = get_clock()->now() - bumper_min_replan_period_;
@@ -1184,7 +1105,7 @@ namespace navigation
     const vec4_t uav_pose = get_mutexed(uav_pose_mutex_, uav_pose_);
     const vec4_t cmd_pose = get_mutexed(cmd_pose_mutex_, cmd_pose_);
     const vec4_t new_goal = cmd_pose + vec4_t(avoidance_vector.x(), avoidance_vector.y(), avoidance_vector.z(), 0.0);
-    startSendingWaypoints({new_goal});
+    commandWaypoints({new_goal});
     RCLCPP_INFO(get_logger(), "[Bumper]: Avoiding obstacle by moving from [%.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f]", uav_pose.x(), uav_pose.y(),
                 uav_pose.z(), new_goal.x(), new_goal.y(), new_goal.z());
   }
@@ -1429,8 +1350,8 @@ namespace navigation
   }
   //}
 
-  /* waypointsToPath //{ */
-  std::shared_ptr<fog_msgs::srv::Path::Request> Navigation::waypointsToPath(const std::vector<vec4_t>& waypoints)
+  /* waypointsToGoal //{ */
+  ControlAction::Goal Navigation::waypointsToGoal(const std::vector<vec4_t>& waypoints)
   {
     nav_msgs::msg::Path msg;
     msg.header.stamp = get_clock()->now();
@@ -1444,34 +1365,34 @@ namespace navigation
       p.pose.orientation = heading2quat(wp.w());
       msg.poses.push_back(p);
     }
-    auto path_srv = std::make_shared<fog_msgs::srv::Path::Request>();
-    path_srv->path = msg;
+    ControlAction::Goal goal;
+    goal.path = msg;
     // read and update the control_command_id_ atomically
     {
       std::scoped_lock lck(control_diags_mutex_);
-      path_srv->mission_id = ++control_command_id_;
+      goal.mission_id = ++control_command_id_;
     }
-    return path_srv;
+    return goal;
   }
   //}
 
   // | ----------------- Command-sending methods ---------------- |
 
-  /* startSendingWaypoints() method //{ */
-  void Navigation::startSendingWaypoints(const std::vector<vec4_t>& waypoints)
+  /* commandWaypoints() method //{ */
+  // the caller must lock the following muteces:
+  // control_ac_mutex_
+  std::shared_future<ControlGoalHandle::SharedPtr> Navigation::commandWaypoints(const std::vector<vec4_t>& waypoints)
   {
     RCLCPP_INFO_STREAM(get_logger(), "Sending waypoints to command_interface:");
     for (const auto& w : waypoints)
       RCLCPP_INFO_STREAM(get_logger(), "       " << w.transpose());
     visualizePath(waypoints);
     publishFutureTrajectory(waypoints);
-    const auto path_req = waypointsToPath(waypoints);
-    RCLCPP_INFO_STREAM(get_logger(), "Sending mission #" << path_req->mission_id << " with " << waypoints.size() << " waypoints to the control interface:");
+    const auto goal = waypointsToGoal(waypoints);
+    RCLCPP_INFO_STREAM(get_logger(), "Sending mission #" << goal.mission_id << " with " << goal.path.poses.size() << " waypoints to the control interface:");
 
-    auto goal_msg = ControlAction::Goal();
-    goal_msg.path = path_req->path;
-    goal_msg.mission_id = path_req->mission_id;
-    goal_handle_future = control_interface_action_client_ptr_->async_send_goal(goal_msg, control_interface_action_client_goal_options_);
+    // finally, send the goal to control interface
+    return control_ac_ptr_->async_send_goal(goal);
   }
   //}
 
@@ -1479,13 +1400,14 @@ namespace navigation
   // the caller must lock the following muteces:
   // state_mutex_
   // waypoints_mutex_
+  // control_ac_mutex_
   void Navigation::hover()
   {
     waypoints_in_.clear();
     waypoint_current_it_ = 0;
     waypoint_state_ = waypoint_state_t::empty;
     const vec4_t cmd_pose = get_mutexed(cmd_pose_mutex_, cmd_pose_);
-    startSendingWaypoints({cmd_pose});
+    commandWaypoints({cmd_pose});
     state_ = nav_state_t::idle;
   }
   //}
