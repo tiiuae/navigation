@@ -74,8 +74,8 @@ namespace navigation
   using control_diag_msg_t = fog_msgs::msg::ControlInterfaceDiagnostics;
   using vehicle_state_t = control_interface::vehicle_state_t;
   using mission_state_t = control_interface::mission_state_t;
-  using ControlInterfaceAction = fog_msgs::action::ControlInterfaceAction;
-  using GoalHandleControlInterfaceAction = rclcpp_action::ClientGoalHandle<ControlInterfaceAction>;
+  using ControlAction = fog_msgs::action::ControlInterfaceAction;
+  using ControlGoalHandle = rclcpp_action::ClientGoalHandle<ControlAction>;
 
   std::string toupper(std::string s)
   {
@@ -114,8 +114,9 @@ namespace navigation
     std::atomic<bool> is_initialized_ = false;
 
     // control_interface action client
-    rclcpp_action::Client<ControlInterfaceAction>::SharedPtr       control_interface_action_client_ptr_;
-    rclcpp_action::Client<ControlInterfaceAction>::SendGoalOptions control_interface_action_client_goal_options_;
+    rclcpp_action::Client<ControlAction>::SharedPtr control_ac_ptr_;
+    ControlGoalHandle::SharedFuture control_goal_handle_future_;
+    rclcpp_action::Client<ControlAction>::SendGoalOptions control_ac_goal_options_;
 
     // bumper-related variables
     std::shared_mutex bumper_mutex_;
@@ -204,9 +205,9 @@ namespace navigation
     void bumperCallback(const fog_msgs::msg::ObstacleSectors::UniquePtr msg);
 
     // action client callbacks
-    void controlInterfaceGoalResponseCallback(GoalHandleControlInterfaceAction::SharedPtr goal_handle);
-    void controlInterfaceFeedbackCallback(GoalHandleControlInterfaceAction::SharedPtr, const std::shared_ptr<const ControlInterfaceAction::Feedback> feedback);
-    void controlInterfaceResultCallback(const GoalHandleControlInterfaceAction::WrappedResult &result);
+    void controlInterfaceGoalResponseCallback(ControlGoalHandle::SharedPtr goal_handle);
+    void controlInterfaceFeedbackCallback(ControlGoalHandle::SharedPtr, const std::shared_ptr<const ControlAction::Feedback> feedback);
+    void controlInterfaceResultCallback(const ControlGoalHandle::WrappedResult &result);
 
     // services provided
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr hover_service_;
@@ -217,7 +218,6 @@ namespace navigation
     rclcpp::Service<fog_msgs::srv::Path>::SharedPtr gps_path_service_;
 
     rclcpp::Client<fog_msgs::srv::Path>::SharedPtr local_path_client_;
-    rclcpp::Client<fog_msgs::srv::Path>::SharedFuture local_path_future_;
 
     rclcpp::Client<fog_msgs::srv::WaypointToLocal>::SharedPtr waypoint_to_local_client_;
     rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedPtr path_to_local_client_;
@@ -246,7 +246,8 @@ namespace navigation
     void visualizeGoals(const std::deque<vec4_t>& waypoints);
 
     std::vector<vec4_t> resamplePath(const std::vector<octomap::point3d>& waypoints, const double end_heading) const;
-    std::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPath(const std::vector<vec4_t>& waypoints);
+    td::shared_ptr<fog_msgs::srv::Path::Request> waypointsToPath(const std::vector<vec4_t>& waypoints);
+    rcl waypointsToGoal(const std::vector<vec4_t>& waypoints);
     void startSendingWaypoints(const std::vector<vec4_t>& waypoints);
     void hover();
 
@@ -391,14 +392,14 @@ namespace navigation
     if (max_waypoint_distance_ <= 0)
       max_waypoint_distance_ = replanning_distance_;
 
-    control_interface_action_client_ptr_ = rclcpp_action::create_client<ControlInterfaceAction>(
+    control_interface_action_client_ptr_ = rclcpp_action::create_client<ControlAction>(
         get_node_base_interface(),
         get_node_graph_interface(),
         get_node_logging_interface(),
         get_node_waitables_interface(),
         "control_interface");
 
-    control_interface_action_client_goal_options_ = rclcpp_action::Client<ControlInterfaceAction>::SendGoalOptions();
+    control_interface_action_client_goal_options_ = rclcpp_action::Client<ControlAction>::SendGoalOptions();
     control_interface_action_client_goal_options_.goal_response_callback =
       std::bind(&Navigation::controlInterfaceGoalResponseCallback, this, _1);
     control_interface_action_client_goal_options_.feedback_callback =
@@ -505,27 +506,27 @@ namespace navigation
   // | -------- control interface action client callbacks ------- |
 
   /* controlInterfaceGoalResponseCallback //{ */
-  void Navigation::controlInterfaceGoalResponseCallback(GoalHandleControlInterfaceAction::SharedPtr goal_handle)
+  void Navigation::controlInterfaceGoalResponseCallback(ControlGoalHandle::SharedPtr goal_handle)
   {
-    if (!goal_handle) {
+    if (!goal_handle)
       RCLCPP_ERROR(this->get_logger(), "Goal was rejected by server");
-    } else {
+    else
       RCLCPP_INFO(this->get_logger(), "Goal accepted by server, waiting for result");
-    }
   }
   //}
 
   /* controlInterfaceFeedbackCallback //{ */
-  void Navigation::controlInterfaceFeedbackCallback(GoalHandleControlInterfaceAction::SharedPtr, const std::shared_ptr<const ControlInterfaceAction::Feedback> feedback)
+  void Navigation::controlInterfaceFeedbackCallback(ControlGoalHandle::SharedPtr, const std::shared_ptr<const ControlAction::Feedback> feedback)
   {
     RCLCPP_INFO(this->get_logger(), "goal feedback");
   }
   //}
 
   /* controlInterfaceResultCallback //{ */
-  void Navigation::controlInterfaceResultCallback(const GoalHandleControlInterfaceAction::WrappedResult & result)
+  void Navigation::controlInterfaceResultCallback(const ControlGoalHandle::WrappedResult & result)
   {
-    switch (result.code) {
+    switch (result.code)
+    {
       case rclcpp_action::ResultCode::SUCCEEDED:
         break;
       case rclcpp_action::ResultCode::ABORTED:
@@ -1466,12 +1467,11 @@ namespace navigation
     publishFutureTrajectory(waypoints);
     const auto path_req = waypointsToPath(waypoints);
     RCLCPP_INFO_STREAM(get_logger(), "Sending mission #" << path_req->mission_id << " with " << waypoints.size() << " waypoints to the control interface:");
-    local_path_future_ = local_path_client_->async_send_request(path_req);
 
-    /* auto goal_msg = ControlInterfaceAction::Goal(); */
-    /* goal_msg.path = path_req->path; */
-    /* goal_msg.mission_id = path_req->mission_id; */
-    /* auto goal_handle_future = control_interface_action_client_ptr_->async_send_goal(goal_msg, control_interface_action_client_goal_options_); */
+    auto goal_msg = ControlAction::Goal();
+    goal_msg.path = path_req->path;
+    goal_msg.mission_id = path_req->mission_id;
+    goal_handle_future = control_interface_action_client_ptr_->async_send_goal(goal_msg, control_interface_action_client_goal_options_);
   }
   //}
 
