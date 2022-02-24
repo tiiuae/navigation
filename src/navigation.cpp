@@ -47,6 +47,7 @@
 #include <fog_msgs/srv/waypoint_to_local.hpp>
 #include <fog_msgs/srv/path_to_local.hpp>
 #include <fog_msgs/action/control_interface_action.hpp>
+#include <fog_msgs/action/navigation_action.hpp>
 
 #include <control_interface/enums.h>
 #include <fog_lib/mutex_utils.h>
@@ -77,7 +78,6 @@ namespace navigation
   using ControlAction = fog_msgs::action::ControlInterfaceAction;
   using ControlActionClient = rclcpp_action::Client<ControlAction>;
   using ControlGoalHandle = rclcpp_action::ClientGoalHandle<ControlAction>;
-  using ControlGoalOptions = ControlActionClient::SendGoalOptions;
 
   std::string toupper(std::string s)
   {
@@ -88,6 +88,9 @@ namespace navigation
   /* class Navigation //{ */
   class Navigation : public rclcpp::Node
   {
+    using NavigationAction = fog_msgs::action::NavigationAction;
+    using NavigationGoalHandle = rclcpp_action::ServerGoalHandle<NavigationAction>;
+
   public:
     Navigation(rclcpp::NodeOptions options);
 
@@ -149,6 +152,16 @@ namespace navigation
     void state_navigation_avoiding();
 
     std::pair<std::vector<vec4_t>, bool> planPath(const vec4_t& goal, std::shared_ptr<octomap::OcTree> mapping_tree);
+
+    // action server
+    std::recursive_mutex action_server_mutex_;
+    rclcpp_action::Server<NavigationAction>::SharedPtr action_server_;
+    std::shared_ptr<NavigationGoalHandle> action_server_goal_handle_ = nullptr;
+
+    // action server methods
+    rclcpp_action::GoalResponse actionServerHandleGoal(const rclcpp_action::GoalUUID& uuid, std::shared_ptr<const NavigationAction::Goal> goal);
+    rclcpp_action::CancelResponse actionServerHandleCancel(const std::shared_ptr<NavigationGoalHandle> goal_handle);
+    void actionServerHandleAccepted(const std::shared_ptr<NavigationGoalHandle> goal_handle);
 
     // params
     double euclidean_distance_cutoff_;
@@ -245,6 +258,7 @@ namespace navigation
     ControlAction::Goal waypointsToGoal(const std::vector<vec4_t>& waypoints);
     std::shared_future<ControlGoalHandle::SharedPtr> commandWaypoints(const std::vector<vec4_t>& waypoints);
     void hover();
+    bool cancel_goal(const std::shared_ptr<NavigationGoalHandle> goal_handle, std::string& fail_reason_out);
 
     void publishDiagnostics();
     void publishFutureTrajectory(const std::vector<vec4_t>& waypoints);
@@ -391,6 +405,19 @@ namespace navigation
     diagnostics_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / diagnostics_rate_),
         std::bind(&Navigation::diagnosticsRoutine, this), new_cbk_grp());
 
+    action_server_ = rclcpp_action::create_server<NavigationAction>(
+        get_node_base_interface(),
+        get_node_clock_interface(),
+        get_node_logging_interface(),
+        get_node_waitables_interface(),
+        "navigation",
+        std::bind(&Navigation::actionServerHandleGoal, this, _1, _2),
+        std::bind(&Navigation::actionServerHandleCancel, this, _1),
+        std::bind(&Navigation::actionServerHandleAccepted, this, _1),
+        rcl_action_server_get_default_options(),
+        new_cbk_grp()
+        );
+
     if (max_waypoint_distance_ <= 0)
       max_waypoint_distance_ = replanning_distance_;
 
@@ -490,16 +517,109 @@ namespace navigation
   }
   //}
 
+  // | ----------------- Action server callbacks ---------------- |
+
+  /* actionServerHandleGoal //{ */
+  // note: to accept or reject goals sent to the server
+  // callback must be non-blocking
+  rclcpp_action::GoalResponse Navigation::actionServerHandleGoal(
+      const rclcpp_action::GoalUUID & uuid,
+      std::shared_ptr<const NavigationAction::Goal> goal)
+  {
+    const auto state = get_mutexed(state_mutex_, state_);
+
+    if (state == nav_state_t::not_ready)
+    {
+      RCLCPP_ERROR_STREAM(this->get_logger(), "Goal " << rclcpp_action::to_string(uuid) << " rejected: node is not initialized: " << to_string(state));
+      return rclcpp_action::GoalResponse::REJECT;
+    }
+
+    if (goal->path.poses.empty())
+    {
+      RCLCPP_ERROR_STREAM(this->get_logger(), "Goal " << rclcpp_action::to_string(uuid) << " rejected: path input does not contain any waypoints");
+      return rclcpp_action::GoalResponse::REJECT;
+    }
+
+    return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+  }
+  //}
+
+  /* actionServerHandleCancel //{ */
+  // note: to accept or reject requests to cancel a goal
+  // callback must be non-blocking
+  rclcpp_action::CancelResponse Navigation::actionServerHandleCancel(const std::shared_ptr<NavigationGoalHandle> goal_handle)
+  {
+    const auto state = get_mutexed(state_mutex_, state_);
+
+    if (state == nav_state_t::idle)
+    {
+      RCLCPP_WARN(get_logger(), "No goal to cancel, vehicle is idle");
+      return rclcpp_action::CancelResponse::REJECT;
+    }
+
+    if (state == nav_state_t::not_ready)
+    {
+      RCLCPP_WARN(get_logger(), "Cannot cancel goal, navigation is not initialized");
+      return rclcpp_action::CancelResponse::REJECT;
+    }
+
+    std::scoped_lock lock(action_server_mutex_);
+    // check if we received cancel of the goal that we are currently executing
+    if (action_server_goal_handle_->get_goal_id() != goal_handle->get_goal_id())
+    {
+      RCLCPP_WARN_STREAM(this->get_logger(), "The target goal is not active (active goal: " << rclcpp_action::to_string(action_server_goal_handle_->get_goal_id()) << ", requested: " << rclcpp_action::to_string(goal_handle->get_goal_id()) << "). CANCEL rejected.");
+      return rclcpp_action::CancelResponse::REJECT;
+    } 
+
+    RCLCPP_WARN_STREAM(this->get_logger(), "CANCEL of goal " << rclcpp_action::to_string(goal_handle->get_goal_id()) << " accepted.");
+    // let another thread handle the cancelling in parallel
+    std::thread([this, goal_handle]()
+        {
+          std::scoped_lock lock(action_server_mutex_, state_mutex_, waypoints_mutex_, control_ac_mutex_);
+          std::string reason;
+          if (cancel_goal(goal_handle, reason))
+            RCLCPP_INFO_STREAM(get_logger(), "Goal " << rclcpp_action::to_string(goal_handle->get_goal_id()) << " canceled. Hovering");
+          else
+            RCLCPP_WARN_STREAM(get_logger(), "Goal " << rclcpp_action::to_string(goal_handle->get_goal_id()) << " cannot be canceled: " << reason);
+        }).detach();
+    return rclcpp_action::CancelResponse::ACCEPT;
+  }
+  //}
+
+  /* actionServerHandleAccepted //{ */
+  // note: to receive a goal handle after a goal has been accepted
+  // callback must be non-blocking
+  void Navigation::actionServerHandleAccepted(const std::shared_ptr<NavigationGoalHandle> goal_handle)
+  {
+    std::scoped_lock lock(action_server_mutex_, state_mutex_, waypoints_mutex_, control_ac_mutex_);
+
+    // attempt to start the new mission
+    std::string reason;
+    if (!addWaypoints(goal_handle->get_goal()->path.poses, override_previous_commands_, reason))
+    {
+      auto result = std::make_shared<NavigationAction::Result>();
+      result->message = "Goal " + rclcpp_action::to_string(goal_handle->get_goal_id()) + " ABORTED: " + std::to_string(goal_handle->get_goal()->path.poses.size()) + " new waypoints not set: " + reason;
+      goal_handle->abort(result);
+      RCLCPP_ERROR_STREAM(get_logger(), result->message);
+      return;
+    }
+
+    RCLCPP_INFO_STREAM(get_logger(), "ActionServer: " + std::to_string(goal_handle->get_goal()->path.poses.size()) + " new waypoints queued for planning.");
+    action_server_goal_handle_= goal_handle;
+  }
+  //}
+
   // | -------------------- Command callbacks ------------------- |
 
   /* addWaypoints() method //{ */
   // the caller must NOT lock the following muteces or else a deadlock may happen:
   // state_mutex_
   // waypoints_mutex_
+  // control_ac_mutex_
   template<typename T>
   size_t Navigation::addWaypoints(const T& path, const bool override, std::string& fail_reason_out)
   {
-    std::scoped_lock lock(state_mutex_, waypoints_mutex_);
+    std::scoped_lock lock(state_mutex_, waypoints_mutex_, control_ac_mutex_);
     size_t added = 0;
     if (state_ != nav_state_t::idle)
     {
@@ -512,6 +632,18 @@ namespace navigation
       {
         fail_reason_out = "not idle! Current state is: " + to_string(state_);
         return added;
+      }
+    }
+
+    // abort any current goal
+    if (action_server_goal_handle_)
+    {
+      if (action_server_goal_handle_->is_active())
+      {
+        RCLCPP_WARN_STREAM(this->get_logger(), "Previous goal is not terminated yet. ABORTING previous goal " << rclcpp_action::to_string(action_server_goal_handle_->get_goal_id()) << ".");
+        auto result = std::make_shared<NavigationAction::Result>();
+        result->message = "Goal ABORTED: New goal received.";
+        action_server_goal_handle_->abort(result);
       }
     }
 
@@ -719,7 +851,7 @@ namespace navigation
       return true;
     }
 
-    std::scoped_lock lock(state_mutex_, waypoints_mutex_);
+    std::scoped_lock lock(state_mutex_, waypoints_mutex_, control_ac_mutex_);
     hover();
     response->message = "Navigation stopped. Hovering";
     response->success = true;
@@ -1412,6 +1544,36 @@ namespace navigation
   }
   //}
 
+  /* cancel_goal() method //{ */
+  // the caller must lock the following muteces:
+  // action_server_mutex_
+  // state_mutex_
+  // waypoints_mutex_
+  // control_ac_mutex_
+  bool Navigation::cancel_goal(const std::shared_ptr<NavigationGoalHandle> goal_handle, std::string& fail_reason_out)
+  {
+    if (goal_handle == nullptr)
+    {
+      fail_reason_out = "Passed goal handle to cancel is a nullptr! Ignoring.";
+      return false;
+    }
+  
+    auto result = std::make_shared<NavigationAction::Result>();
+    if (action_server_goal_handle_->get_goal_id() != goal_handle->get_goal_id())
+    {
+      fail_reason_out = "Attempting to cancel goal " + rclcpp_action::to_string(goal_handle->get_goal_id()) + ", but goal " + rclcpp_action::to_string(action_server_goal_handle_->get_goal_id()) + " is active! Ignoring.";
+      result->message = fail_reason_out;
+      goal_handle->canceled(result);
+      return false;
+    }
+  
+    hover();
+    result->message = "Goal " + rclcpp_action::to_string(goal_handle->get_goal_id()) + " canceled.";
+    goal_handle->canceled(result);
+    return true;
+  }
+  //}
+
   // | -------------- Publish/visualization methods ------------- |
 
   /* publishDiagnostics //{ */
@@ -1425,10 +1587,10 @@ namespace navigation
     msg.header.stamp = get_clock()->now();
     msg.header.frame_id = octree_frame_;
     msg.state = to_msg(state_);
-    msg.waypoints_total = waypoints_in_.size();
 
+    msg.mission_progress.current_waypoint = waypoint_current_it_;
+    msg.mission_progress.size = waypoints_in_.size();
     msg.waypoint_state = to_msg(waypoint_state_);
-    msg.waypoint_id = waypoint_current_it_;
     if (waypoints_in_.size() > waypoint_current_it_)
     {
       msg.waypoint.x = waypoints_in_.at(waypoint_current_it_).x();
