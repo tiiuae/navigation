@@ -119,7 +119,7 @@ namespace navigation
     std::atomic<bool> is_initialized_ = false;
 
     // control_interface action client
-    std::mutex control_ac_mutex_;
+    std::recursive_mutex control_ac_mutex_;
     ControlActionClient::SharedPtr control_ac_ptr_;
     std::shared_future<ControlGoalHandle::SharedPtr> control_goal_handle_future_;
     std::shared_future<ControlGoalHandle::WrappedResult> control_goal_result_future_;
@@ -131,7 +131,7 @@ namespace navigation
     std::shared_mutex state_mutex_;
     nav_state_t state_ = nav_state_t::not_ready;
 
-    std::mutex waypoints_mutex_;
+    std::recursive_mutex waypoints_mutex_;
     std::deque<vec4_t> waypoints_in_;
     size_t waypoint_current_it_ = 0;
     waypoint_state_t waypoint_state_ = waypoint_state_t::empty;
@@ -591,7 +591,7 @@ namespace navigation
   // callback must be non-blocking
   void Navigation::actionServerHandleAccepted(const std::shared_ptr<NavigationGoalHandle> goal_handle)
   {
-    std::scoped_lock lock(action_server_mutex_, state_mutex_, waypoints_mutex_, control_ac_mutex_);
+    std::scoped_lock lock(action_server_mutex_);
 
     // attempt to start the new mission
     std::string reason;
