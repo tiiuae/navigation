@@ -71,7 +71,7 @@ class NavigationActionClient(Node):
         path.header.stamp = rclpy.clock.Clock().now().to_msg()
         path.header.frame_id = "world"
 
-        for wp in WAYPOINTS_LOCAL:
+        for wp in WAYPOINTS_GPS:
             pose = PoseStamped()
             pose.header.stamp = path.header.stamp
             pose.header.frame_id = "world"
@@ -86,6 +86,7 @@ class NavigationActionClient(Node):
 
         goal_msg = NavigationAction.Goal()
         goal_msg.path = path
+        goal_msg.is_local = False
         
         print('Sending goal request...')
 
@@ -110,7 +111,7 @@ class NavigationActionClient(Node):
         # Start a 2 second timer
 
         self._goal_handle = goal_handle
-        self._timer = self.create_timer(20.0, self.timer_callback)
+        self._timer = self.create_timer(8000.0, self.timer_callback)
 
     def get_result_callback(self, future):
         result = future.result().result

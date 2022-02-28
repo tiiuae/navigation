@@ -90,6 +90,7 @@ namespace navigation
   {
     using NavigationAction = fog_msgs::action::NavigationAction;
     using NavigationGoalHandle = rclcpp_action::ServerGoalHandle<NavigationAction>;
+    const std::shared_ptr<NavigationGoalHandle> no_goal = nullptr;
 
   public:
     Navigation(rclcpp::NodeOptions options);
@@ -232,7 +233,7 @@ namespace navigation
     rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedPtr path_to_local_client_;
 
     template<typename T>
-    size_t addWaypoints(const T& path, const bool override, std::string& fail_reason_out);
+    size_t addWaypoints(const T& path, const std::shared_ptr<NavigationGoalHandle> goal_handle, const bool override, std::string& fail_reason_out);
     void pathCallback(const nav_msgs::msg::Path::UniquePtr msg);
 
     // service callbacks
@@ -245,7 +246,7 @@ namespace navigation
 
     // future callback
     void waypointFutureCallback(rclcpp::Client<fog_msgs::srv::WaypointToLocal>::SharedFuture future);
-    void pathFutureCallback(rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedFuture future);
+    void pathFutureCallback(rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedFuture future, const std::shared_ptr<NavigationGoalHandle> goal_handle);
 
     // visualization
     void visualizeTree(const octomap::OcTree& tree);
@@ -259,6 +260,10 @@ namespace navigation
     std::shared_future<ControlGoalHandle::SharedPtr> commandWaypoints(const std::vector<vec4_t>& waypoints);
     void hover();
     bool cancel_goal(const std::shared_ptr<NavigationGoalHandle> goal_handle, std::string& fail_reason_out);
+
+    void finish_goal(const std::shared_ptr<NavigationGoalHandle> goal_handle);
+    void abort_goal(const std::shared_ptr<NavigationGoalHandle> goal_handle, const std::string& reason);
+    void update_goal(const std::shared_ptr<NavigationGoalHandle> goal_handle, const int current_waypoint, const int waypoints);
 
     void publishDiagnostics();
     void publishFutureTrajectory(const std::vector<vec4_t>& waypoints);
@@ -593,19 +598,27 @@ namespace navigation
   {
     std::scoped_lock lock(action_server_mutex_);
 
-    // attempt to start the new mission
-    std::string reason;
-    if (!addWaypoints(goal_handle->get_goal()->path.poses, override_previous_commands_, reason))
+    // if the goal is not global, first request from ControlInterface to transform it to local coordinates
+    if (!goal_handle->get_goal()->is_local)
     {
-      auto result = std::make_shared<NavigationAction::Result>();
-      result->message = "Goal " + rclcpp_action::to_string(goal_handle->get_goal_id()) + " ABORTED: " + std::to_string(goal_handle->get_goal()->path.poses.size()) + " new waypoints not set: " + reason;
-      goal_handle->abort(result);
-      RCLCPP_ERROR_STREAM(get_logger(), result->message);
+      auto convert_path_req = std::make_shared<fog_msgs::srv::PathToLocal::Request>();
+      convert_path_req->path = goal_handle->get_goal()->path;
+      rclcpp::Client<fog_msgs::srv::PathToLocal>::CallbackType cbk = std::bind(&Navigation::pathFutureCallback, this, std::placeholders::_1, goal_handle);
+      path_to_local_client_->async_send_request(convert_path_req, cbk);
+      RCLCPP_INFO_STREAM(get_logger(), "Requesting transformation of goal path from GPS to local coordinates");
+      return;
+    }
+
+    // if it's already local, attempt to start the new mission
+    std::string reason;
+    if (!addWaypoints(goal_handle->get_goal()->path.poses, goal_handle, override_previous_commands_, reason))
+    {
+      reason = std::to_string(goal_handle->get_goal()->path.poses.size()) + " new waypoints not set: " + reason;
+      abort_goal(goal_handle, reason);
       return;
     }
 
     RCLCPP_INFO_STREAM(get_logger(), "ActionServer: " + std::to_string(goal_handle->get_goal()->path.poses.size()) + " new waypoints queued for planning.");
-    action_server_goal_handle_= goal_handle;
   }
   //}
 
@@ -617,7 +630,7 @@ namespace navigation
   // waypoints_mutex_
   // control_ac_mutex_
   template<typename T>
-  size_t Navigation::addWaypoints(const T& path, const bool override, std::string& fail_reason_out)
+  size_t Navigation::addWaypoints(const T& path, const std::shared_ptr<NavigationGoalHandle> goal_handle, const bool override, std::string& fail_reason_out)
   {
     std::scoped_lock lock(state_mutex_, waypoints_mutex_, control_ac_mutex_);
     size_t added = 0;
@@ -636,16 +649,16 @@ namespace navigation
     }
 
     // abort any current goal
-    if (action_server_goal_handle_)
+    if (action_server_goal_handle_ != goal_handle && action_server_goal_handle_)
     {
       if (action_server_goal_handle_->is_active())
       {
         RCLCPP_WARN_STREAM(this->get_logger(), "Previous goal is not terminated yet. ABORTING previous goal " << rclcpp_action::to_string(action_server_goal_handle_->get_goal_id()) << ".");
-        auto result = std::make_shared<NavigationAction::Result>();
-        result->message = "Goal ABORTED: New goal received.";
-        action_server_goal_handle_->abort(result);
+        abort_goal(action_server_goal_handle_, "New goal received.");
       }
     }
+    // and update the current active goal handle
+    action_server_goal_handle_ = goal_handle;
 
     const vec4_t cmd_pose = get_mutexed(cmd_pose_mutex_, cmd_pose_);
   
@@ -694,7 +707,7 @@ namespace navigation
     }
 
     std::string reason;
-    const size_t added = addWaypoints(msg->poses, override_previous_commands_, reason);
+    const size_t added = addWaypoints(msg->poses, no_goal, override_previous_commands_, reason);
     if (added == 0)
     {
       RCLCPP_ERROR_STREAM(get_logger(), "Path rejected: " << reason);
@@ -718,7 +731,7 @@ namespace navigation
     }
 
     std::string reason;
-    const size_t added = addWaypoints(request->path.poses, override_previous_commands_, reason);
+    const size_t added = addWaypoints(request->path.poses, no_goal, override_previous_commands_, reason);
     if (added == 0)
     {
       response->message = "Path rejected: " + reason;
@@ -758,7 +771,8 @@ namespace navigation
 
     auto convert_path_req = std::make_shared<fog_msgs::srv::PathToLocal::Request>();
     convert_path_req->path = request->path;
-    path_to_local_client_->async_send_request(convert_path_req, std::bind(&Navigation::pathFutureCallback, this, std::placeholders::_1));
+    rclcpp::Client<fog_msgs::srv::PathToLocal>::CallbackType cbk = std::bind(&Navigation::pathFutureCallback, this, std::placeholders::_1, no_goal);
+    path_to_local_client_->async_send_request(convert_path_req, cbk);
 
     response->message = "Requesting transformation of path from GPS to local coordinates";
     response->success = true;
@@ -784,7 +798,7 @@ namespace navigation
     const std::vector<vec4_t> path = {point};
 
     std::string reason;
-    const size_t added = addWaypoints(path, override_previous_commands_, reason);
+    const size_t added = addWaypoints(path, no_goal, override_previous_commands_, reason);
     if (added == 0)
     {
       response->message = "Waypoint rejected: " + reason;
@@ -853,6 +867,7 @@ namespace navigation
 
     std::scoped_lock lock(state_mutex_, waypoints_mutex_, control_ac_mutex_);
     hover();
+    abort_goal(action_server_goal_handle_, "Hover commanded.");
     response->message = "Navigation stopped. Hovering";
     response->success = true;
     RCLCPP_INFO(get_logger(), "%s", response->message.c_str());
@@ -887,7 +902,7 @@ namespace navigation
     const std::vector<vec4_t> path = {point};
 
     std::string reason;
-    const size_t added = addWaypoints(path, override_previous_commands_, reason);
+    const size_t added = addWaypoints(path, no_goal, override_previous_commands_, reason);
     if (added == 0)
       RCLCPP_ERROR_STREAM(get_logger(), "Waypoint rejected: " << reason);
     else
@@ -896,33 +911,53 @@ namespace navigation
   //}
 
   /* pathFutureCallback //{ */
-  void Navigation::pathFutureCallback(rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedFuture future)
+  void Navigation::pathFutureCallback(rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedFuture future, const std::shared_ptr<NavigationGoalHandle> goal_handle)
   {
+    auto goal_result = std::make_shared<NavigationAction::Result>();
+
     if (!future_ready(future))
     {
-      RCLCPP_ERROR_STREAM(get_logger(), "Failed to call service to transform waypoint.");
-      return;
-    }
-    const std::shared_ptr<fog_msgs::srv::PathToLocal_Response> result = future.get();
-    if (result == nullptr)
-    {
-      RCLCPP_ERROR_STREAM(get_logger(), "Failed to call service to transform path.");
-      return;
-    }
-    if (!result->success)
-    {
-      RCLCPP_ERROR_STREAM(get_logger(), "Failed to transform path: " << result->message);
+      if (goal_handle)
+        abort_goal(goal_handle, "Failed to call service to transform path.");
+      else
+        RCLCPP_ERROR_STREAM(get_logger(), "Failed to call service to transform path.");
       return;
     }
 
-    RCLCPP_INFO(get_logger(), "Coordinate transform returned %ld points", result->path.poses.size());
+    const std::shared_ptr<fog_msgs::srv::PathToLocal_Response> fut_result = future.get();
+    if (fut_result == nullptr)
+    {
+      if (goal_handle)
+        abort_goal(goal_handle, "Failed to call service to transform path.");
+      else
+        RCLCPP_ERROR_STREAM(get_logger(), "Failed to call service to transform path.");
+      return;
+    }
+
+    if (!fut_result->success)
+    {
+      if (goal_handle)
+        abort_goal(goal_handle, "Failed to transform path: " + fut_result->message);
+      else
+        RCLCPP_ERROR_STREAM(get_logger(), "Failed to transform path: " << fut_result->message);
+      return;
+    }
+
+    RCLCPP_INFO(get_logger(), "Coordinate transform returned %ld points", fut_result->path.poses.size());
 
     std::string reason;
-    const size_t added = addWaypoints(result->path.poses, override_previous_commands_, reason);
+    const size_t added = addWaypoints(fut_result->path.poses, goal_handle, override_previous_commands_, reason);
     if (added == 0)
-      RCLCPP_ERROR_STREAM(get_logger(), "Path rejected: " << reason);
-    else
-      RCLCPP_INFO_STREAM(get_logger(), "Queued " << result->path.poses.size() << " new waypoints for planning.");
+    {
+      if (goal_handle)
+        abort_goal(goal_handle, std::to_string(goal_handle->get_goal()->path.poses.size()) + " new waypoints not set: " + reason);
+      else
+        RCLCPP_ERROR_STREAM(get_logger(), "Path rejected: " << reason);
+      return;
+    }
+
+    // finally, hopefully all went well!
+    RCLCPP_INFO_STREAM(get_logger(), "Queued " << fut_result->path.poses.size() << " new waypoints for planning.");
   }
   //}
 
@@ -1002,6 +1037,7 @@ namespace navigation
       waypoint_current_it_ = 0;
       waypoint_state_ = waypoint_state_t::empty;
       state_ = nav_state_t::not_ready;
+      abort_goal(action_server_goal_handle_, "Vehicle no longer in autonomous flight.");
       return;
     }
 
@@ -1013,6 +1049,7 @@ namespace navigation
       {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Missing fresh bumper data calling hover and switching to not_ready.");
         hover();
+        abort_goal(action_server_goal_handle_, "Missing fresh bumper data.");
         state_ = nav_state_t::not_ready;
         return;
       }
@@ -1084,6 +1121,7 @@ namespace navigation
     if (octree_ == nullptr || octree_->size() < 1)
     {
       RCLCPP_WARN(get_logger(), "Octomap is nullptr or empty! Aborting planning and swiching to idle");
+      abort_goal(action_server_goal_handle_, "Octomap is nullptr or empty!");
       state_ = nav_state_t::idle;
       waypoint_state_ = waypoint_state_t::empty;
       return;
@@ -1092,6 +1130,7 @@ namespace navigation
     if (waypoints_in_.empty() || waypoint_current_it_ >= waypoints_in_.size())
     {
       RCLCPP_INFO(get_logger(), "No more navigation goals available. Switching to idle");
+      finish_goal(action_server_goal_handle_);
       state_ = nav_state_t::idle;
       return;
     }
@@ -1122,6 +1161,7 @@ namespace navigation
           RCLCPP_INFO(get_logger(), "The last provided navigation goal has been visited. Switching to idle");
           waypoints_in_.clear();
           waypoint_current_it_ = 0;
+          finish_goal(action_server_goal_handle_);
           state_ = nav_state_t::idle;
         }
         // if it was not the final goal, let's go to the next goal
@@ -1129,6 +1169,7 @@ namespace navigation
         {
           RCLCPP_INFO(get_logger(), "Navigation goal #%lu/%lu visited, continuing.", waypoint_current_it_, waypoints_in_.size());
           waypoint_current_it_++;
+          update_goal(action_server_goal_handle_, waypoint_current_it_, waypoints_in_.size());
         }
       }
       // the current goal is not reached, yet the path is empty. this means that the planning failed
@@ -1140,6 +1181,7 @@ namespace navigation
         if (replanning_counter_ >= replanning_limit_)
         {
           RCLCPP_ERROR(get_logger(), "No path produced after %d repeated attempts. Please provide a new waypoint. Clearing waypoints and switching to idle.", replanning_counter_);
+          abort_goal(action_server_goal_handle_, "Waypoint #" + std::to_string(waypoint_current_it_) + "/" + std::to_string(waypoints_in_.size()) + " is unreachable.");
           waypoints_in_.clear();
           waypoint_current_it_ = 0;
           replanning_counter_ = 0;
@@ -1571,6 +1613,45 @@ namespace navigation
     result->message = "Goal " + rclcpp_action::to_string(goal_handle->get_goal_id()) + " canceled.";
     goal_handle->canceled(result);
     return true;
+  }
+  //}
+
+  /* finish_goal() method //{ */
+  void Navigation::finish_goal(const std::shared_ptr<NavigationGoalHandle> goal_handle)
+  {
+    if (goal_handle == nullptr)
+      return;
+
+    auto result = std::make_shared<NavigationAction::Result>();
+    result->message = "Goal " + rclcpp_action::to_string(goal_handle->get_goal_id()) + " finished: All waypoints visited";
+    goal_handle->succeed(result);
+    RCLCPP_INFO_STREAM(get_logger(), result->message);
+  }
+  //}
+
+  /* abort_goal() method //{ */
+  void Navigation::abort_goal(const std::shared_ptr<NavigationGoalHandle> goal_handle, const std::string& reason)
+  {
+    if (goal_handle == nullptr)
+      return;
+
+    auto result = std::make_shared<NavigationAction::Result>();
+    result->message = "Goal " + rclcpp_action::to_string(goal_handle->get_goal_id()) + " ABORTED: " + reason;
+    goal_handle->abort(result);
+    RCLCPP_ERROR_STREAM(get_logger(), result->message);
+  }
+  //}
+
+  /* update_goal() method //{ */
+  void Navigation::update_goal(const std::shared_ptr<NavigationGoalHandle> goal_handle, const int current_waypoint, const int waypoints)
+  {
+    if (goal_handle == nullptr)
+      return;
+
+    auto feedback = std::make_shared<NavigationAction::Feedback>();
+    feedback->mission_progress.current_waypoint = current_waypoint;
+    feedback->mission_progress.size = waypoints;
+    goal_handle->publish_feedback(feedback);
   }
   //}
 
