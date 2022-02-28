@@ -1015,8 +1015,9 @@ namespace navigation
   /* diagnosticsRoutine //{ */
   void Navigation::diagnosticsRoutine()
   {
-    std::scoped_lock lck(state_mutex_, waypoints_mutex_);
+    std::scoped_lock lck(state_mutex_, waypoints_mutex_, action_server_mutex_);
     publishDiagnostics();
+    update_goal(action_server_goal_handle_, waypoint_current_it_, waypoints_in_.size());
   }
   //}
 
@@ -1594,9 +1595,9 @@ namespace navigation
   // control_ac_mutex_
   bool Navigation::cancel_goal(const std::shared_ptr<NavigationGoalHandle> goal_handle, std::string& fail_reason_out)
   {
-    if (goal_handle == nullptr)
+    if (goal_handle == nullptr || !goal_handle->is_active())
     {
-      fail_reason_out = "Passed goal handle to cancel is a nullptr! Ignoring.";
+      fail_reason_out = "Passed goal handle to cancel is a nullptr or not active! Ignoring.";
       return false;
     }
   
@@ -1619,7 +1620,7 @@ namespace navigation
   /* finish_goal() method //{ */
   void Navigation::finish_goal(const std::shared_ptr<NavigationGoalHandle> goal_handle)
   {
-    if (goal_handle == nullptr)
+    if (goal_handle == nullptr || !goal_handle->is_active())
       return;
 
     auto result = std::make_shared<NavigationAction::Result>();
@@ -1632,7 +1633,7 @@ namespace navigation
   /* abort_goal() method //{ */
   void Navigation::abort_goal(const std::shared_ptr<NavigationGoalHandle> goal_handle, const std::string& reason)
   {
-    if (goal_handle == nullptr)
+    if (goal_handle == nullptr || !goal_handle->is_active())
       return;
 
     auto result = std::make_shared<NavigationAction::Result>();
@@ -1645,7 +1646,7 @@ namespace navigation
   /* update_goal() method //{ */
   void Navigation::update_goal(const std::shared_ptr<NavigationGoalHandle> goal_handle, const int current_waypoint, const int waypoints)
   {
-    if (goal_handle == nullptr)
+    if (goal_handle == nullptr || !goal_handle->is_active())
       return;
 
     auto feedback = std::make_shared<NavigationAction::Feedback>();
