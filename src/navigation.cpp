@@ -158,6 +158,7 @@ namespace navigation
     std::recursive_mutex action_server_mutex_;
     rclcpp_action::Server<NavigationAction>::SharedPtr action_server_;
     std::shared_ptr<NavigationGoalHandle> action_server_goal_handle_ = nullptr;
+    uint32_t mission_id_ = 0;
 
     // action server methods
     rclcpp_action::GoalResponse actionServerHandleGoal(const rclcpp_action::GoalUUID& uuid, std::shared_ptr<const NavigationAction::Goal> goal);
@@ -659,6 +660,7 @@ namespace navigation
     }
     // and update the current active goal handle
     action_server_goal_handle_ = goal_handle;
+    mission_id_++;
 
     const vec4_t cmd_pose = get_mutexed(cmd_pose_mutex_, cmd_pose_);
   
@@ -1131,6 +1133,8 @@ namespace navigation
     if (waypoints_in_.empty() || waypoint_current_it_ >= waypoints_in_.size())
     {
       RCLCPP_INFO(get_logger(), "No more navigation goals available. Switching to idle");
+      waypoints_in_.clear();
+      waypoint_current_it_ = 0;
       finish_goal(action_server_goal_handle_);
       state_ = nav_state_t::idle;
       return;
@@ -1652,6 +1656,7 @@ namespace navigation
     auto feedback = std::make_shared<NavigationAction::Feedback>();
     feedback->mission_progress.current_waypoint = current_waypoint;
     feedback->mission_progress.size = waypoints;
+    feedback->mission_progress.mission_id = mission_id_;
     goal_handle->publish_feedback(feedback);
   }
   //}
