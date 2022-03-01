@@ -109,9 +109,8 @@ class NavigationActionClient(Node):
         self._get_result_future.add_done_callback(self.get_result_callback)
         
         # Start a 2 second timer
-
-        self._goal_handle = goal_handle
-        self._timer = self.create_timer(8000.0, self.timer_callback)
+        # self._goal_handle = goal_handle
+        # self._timer = self.create_timer(2.0, self.timer_callback)
 
     def get_result_callback(self, future):
         result = future.result().result
@@ -150,11 +149,11 @@ def main(args=None):
     rclpy.init(args=args)
     action_client = NavigationActionClient()
     action_client.get_logger().info('********************************')
+
     future = action_client.send_goal()
     rclpy.spin(action_client)
 
     action_client.get_logger().info('=================================')
-        
 
 if __name__ == '__main__':
     main()
