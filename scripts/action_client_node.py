@@ -62,7 +62,34 @@ class NavigationActionClient(Node):
 
         self._service_callback_group = MutuallyExclusiveCallbackGroup()
         self._local_waypoint_service = self.create_service(Vec4, '~/local_waypoint', self.local_waypoint_callback, callback_group = self._service_callback_group) 
+        self._gps_waypoint_service = self.create_service(Vec4, '~/gps_waypoint', self.gps_waypoint_callback, callback_group = self._service_callback_group) 
         self._cancel_goal = self.create_service(Trigger, '~/cancel_goal', self.cancel_goal_callback, callback_group = self._service_callback_group) 
+
+    def local_waypoint_callback(self, request, response):
+        self.get_logger().info('Incoming local waypoint request: \t{0}'.format(request.goal))
+        self.send_goal(request.goal, True)
+        
+        # Wait for action to be done
+        self._action_done_event.wait()
+        response.success = self._action_response_result
+        if response.success:
+            response.message = "Goal accepted"
+        else:
+            response.message = "Goal rejected"
+        return response
+
+    def gps_waypoint_callback(self, request, response):
+        self.get_logger().info('Incoming gps waypoint request: \t{0}'.format(request.goal))
+        self.send_goal(request.goal, False)
+        
+        # Wait for action to be done
+        self._action_done_event.wait()
+        response.success = self._action_response_result
+        if response.success:
+            response.message = "Goal accepted"
+        else:
+            response.message = "Goal rejected"
+        return response
 
     def cancel_goal_callback(self, request, response):
         self.get_logger().info('Incoming request to cancel goal')
@@ -82,20 +109,8 @@ class NavigationActionClient(Node):
             response.message = "Goal failed to cancel"
         return response
 
-    def local_waypoint_callback(self, request, response):
-        self.get_logger().info('Incoming local waypoint request: \t{0}'.format(request.goal))
-        self.send_goal(request.goal)
-        
-        # Wait for action to be done
-        self._action_done_event.wait()
-        response.success = self._action_response_result
-        if response.success:
-            response.message = "Goal accepted"
-        else:
-            response.message = "Goal rejected"
-        return response
 
-    def send_goal(self, goal):
+    def send_goal(self, goal, is_local):
         self.get_logger().info('Waiting for action server')
         self._action_client.wait_for_server()
 
@@ -117,7 +132,7 @@ class NavigationActionClient(Node):
 
         goal_msg = NavigationAction.Goal()
         goal_msg.path = path
-        goal_msg.is_local = True
+        goal_msg.is_local = is_local
         
         self.get_logger().info('Sending goal request...')
         self._action_done_event.clear()
