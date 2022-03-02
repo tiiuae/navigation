@@ -17,6 +17,7 @@ from fog_msgs.action import NavigationAction
 
 from fog_msgs.srv import Vec4 
 
+from std_srvs.srv import Trigger
 from nav_msgs.msg import Path as NavPath
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
@@ -51,13 +52,35 @@ class NavigationActionClient(Node):
 
         super().__init__("navigation_action_client")
         self._action_done_event = Event()
+        self._action_cancel_event = Event()
         self._action_response_result = False
+        self._action_cancel_result = False
+        self._goal_handle = None
 
         self._action_callback_group = MutuallyExclusiveCallbackGroup()
         self._action_client = ActionClient(self, NavigationAction, "/" + DRONE_DEVICE_ID + "/navigation", callback_group = self._action_callback_group)
 
         self._service_callback_group = MutuallyExclusiveCallbackGroup()
         self._local_waypoint_service = self.create_service(Vec4, '~/local_waypoint', self.local_waypoint_callback, callback_group = self._service_callback_group) 
+        self._cancel_goal = self.create_service(Trigger, '~/cancel_goal', self.cancel_goal_callback, callback_group = self._service_callback_group) 
+
+    def cancel_goal_callback(self, request, response):
+        self.get_logger().info('Incoming request to cancel goal')
+        if self._goal_handle is None: 
+            response.success = False
+            response.message = "No active goal"
+            self.get_logger().error('{0}'.format(response.message))
+            return response
+
+        self.cancel_goal()
+        # Wait for action to be done
+        self._action_cancel_event.wait()
+        response.success = self._action_cancel_result
+        if response.success:
+            response.message = "Goal canceled"
+        else:
+            response.message = "Goal failed to cancel"
+        return response
 
     def local_waypoint_callback(self, request, response):
         self.get_logger().info('Incoming local waypoint request: \t{0}'.format(request.goal))
@@ -73,7 +96,7 @@ class NavigationActionClient(Node):
         return response
 
     def send_goal(self, goal):
-        print('Waiting for action server')
+        self.get_logger().info('Waiting for action server')
         self._action_client.wait_for_server()
 
         path = NavPath()
@@ -96,7 +119,7 @@ class NavigationActionClient(Node):
         goal_msg.path = path
         goal_msg.is_local = True
         
-        print('Sending goal request...')
+        self.get_logger().info('Sending goal request...')
         self._action_done_event.clear()
         self._action_response_result = False
 
@@ -135,23 +158,31 @@ class NavigationActionClient(Node):
         elif status == GoalStatus.STATUS_CANCELED:
             self.get_logger().error('Goal canceled! Result: {0}'.format(result.message))
 
+        self._goal_handle = None
+
     def feedback_callback(self, feedback_msg):
         feedback = feedback_msg.feedback
-        self.get_logger().info('Received feedback: {0}'.format(feedback))
+        self.get_logger().info('Received feedback: {0}'.format(feedback.mission_progress))
+
+    def cancel_goal(self):
+        self.get_logger().info('Canceling goal')
+        self._action_cancel_event.clear()
+        self._action_cancel_result = False
+        
+        # Cancel the goal
+        future = self._goal_handle.cancel_goal_async()
+        future.add_done_callback(self.cancel_done)
 
     def cancel_done(self, future):
         cancel_response = future.result()
         if len(cancel_response.goals_canceling) > 0:
             self.get_logger().info('Goal successfully canceled')
+            self._action_cancel_result = True
+            self._goal_handle = None
         else:
             self.get_logger().error('Goal failed to cancel')
 
-    def cancel_goal(self):
-        self.get_logger().info('Canceling goal')
-        
-        # Cancel the goal
-        future = self._goal_handle.cancel_goal_async()
-        future.add_done_callback(self.cancel_done)
+        self._action_done_event.set()
 
 def main(args=None):
     rclpy.init(args=args)
