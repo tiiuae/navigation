@@ -577,7 +577,7 @@ namespace navigation
       return rclcpp_action::CancelResponse::REJECT;
     } 
 
-    RCLCPP_WARN_STREAM(this->get_logger(), "CANCEL of goal " << rclcpp_action::to_string(goal_handle->get_goal_id()) << " accepted.");
+    RCLCPP_WARN_STREAM(this->get_logger(), "CANCEL of goal " << rclcpp_action::to_string(goal_handle->get_goal_id()) << " accepted. Attempting hovering.");
     // let another thread handle the cancelling in parallel
     std::thread([this, goal_handle]()
         {
