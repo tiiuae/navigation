@@ -1362,9 +1362,8 @@ namespace navigation
         if (path.size() > 1)
         {
           double path_dist = 0.0;
-          for (size_t i = 1; i < path.size(); i++){
+          for (size_t i = 1; i < path.size(); i++)
             path_dist += (path[i] - path[i-1]).norm();
-          }
           // use sradians::dist instead of std::abs to correctly compare two cyclic values in range [-pi, pi]
           if (path_dist < planning_tree_resolution_)
           {
@@ -1372,11 +1371,6 @@ namespace navigation
             {
               append_goal = true;
               RCLCPP_INFO(get_logger(), "turning in one spot");
-            }
-            else
-            {
-              path_valid = false;
-              RCLCPP_WARN(get_logger(), "Found a path that is too short.");
             }
           }
         }
