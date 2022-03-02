@@ -612,14 +612,15 @@ namespace navigation
 
     // if it's already local, attempt to start the new mission
     std::string reason;
-    if (!addWaypoints(goal_handle->get_goal()->path.poses, goal_handle, override_previous_commands_, reason))
+    const size_t added = addWaypoints(goal_handle->get_goal()->path.poses, goal_handle, override_previous_commands_, reason);
+    if (added == 0)
     {
       reason = std::to_string(goal_handle->get_goal()->path.poses.size()) + " new waypoints not set: " + reason;
       abort_goal(goal_handle, reason);
       return;
     }
 
-    RCLCPP_INFO_STREAM(get_logger(), "ActionServer: " + std::to_string(goal_handle->get_goal()->path.poses.size()) + " new waypoints queued for planning.");
+    RCLCPP_INFO_STREAM(get_logger(), "Queued " << added << " new waypoints for planning as goal" << rclcpp_action::to_string(action_server_goal_handle_->get_goal_id()) << ".");
   }
   //}
 
@@ -660,8 +661,6 @@ namespace navigation
     }
     // and update the current active goal handle
     action_server_goal_handle_ = goal_handle;
-    if (action_server_goal_handle_)
-      RCLCPP_INFO_STREAM(this->get_logger(), "New goal " << rclcpp_action::to_string(action_server_goal_handle_->get_goal_id()) << " assigned.");
     mission_id_++;
 
     const vec4_t cmd_pose = get_mutexed(cmd_pose_mutex_, cmd_pose_);
