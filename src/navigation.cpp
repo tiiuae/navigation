@@ -660,6 +660,8 @@ namespace navigation
     }
     // and update the current active goal handle
     action_server_goal_handle_ = goal_handle;
+    if (action_server_goal_handle_)
+      RCLCPP_INFO_STREAM(this->get_logger(), "New goal " << rclcpp_action::to_string(action_server_goal_handle_->get_goal_id()) << " assigned.");
     mission_id_++;
 
     const vec4_t cmd_pose = get_mutexed(cmd_pose_mutex_, cmd_pose_);
