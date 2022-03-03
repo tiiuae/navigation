@@ -197,7 +197,7 @@ class NavigationActionClient(Node):
         else:
             self.get_logger().error('Goal failed to cancel')
 
-        self._action_done_event.set()
+        self._action_cancel_event.set()
 
 def main(args=None):
     rclpy.init(args=args)
