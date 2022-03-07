@@ -41,7 +41,7 @@ def generate_launch_description():
                     {"use_sim_time": launch.substitutions.LaunchConfiguration("use_sim_time")},
                 ],
                 remappings=[
-                    ("~/octomap_in", "/" + DRONE_DEVICE_ID + "/octomap_server/octomap_full"),
+                    ("~/octomap_in", "/" + DRONE_DEVICE_ID + "/octomap_server/octomap/local/full"),
                     ("~/odometry_in", "/" + DRONE_DEVICE_ID + "/odometry/local_odom"),
                     ("~/cmd_pose_in", "/" + DRONE_DEVICE_ID + "/control_interface/cmd_pose"),
                     ("~/hover_in", "~/hover"),

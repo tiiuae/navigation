@@ -33,9 +33,9 @@ enum PlanningResult
 struct Node
 {
   octomap::OcTreeKey key;
-  float             total_cost;
-  float             cum_dist;
-  float             goal_dist;
+  float              total_cost;
+  float              cum_dist;
+  float              goal_dist;
 
   bool operator==(const Node &other) const;
   bool operator!=(const Node &other) const;
@@ -62,19 +62,20 @@ class AstarPlanner {
 
 public:
   AstarPlanner(float safe_obstacle_distance, float euclidean_distance_cutoff, float planning_tree_resolution, float distance_penalty, float greedy_penalty,
-               float min_altitude, float max_altitude, float timeout_threshold, float max_waypoint_distance, bool unknown_is_occupied, const rclcpp::Logger& logger);
+               float min_altitude, float max_altitude, float timeout_threshold, float max_waypoint_distance, bool unknown_is_occupied,
+               const rclcpp::Logger &logger);
 
 private:
-  float safe_obstacle_distance;
-  float euclidean_distance_cutoff;
-  float planning_tree_resolution;
-  float distance_penalty;
-  float greedy_penalty;
-  float timeout_threshold;
-  float max_waypoint_distance;
-  float min_altitude;
-  float max_altitude;
-  bool   unknown_is_occupied;
+  float          safe_obstacle_distance;
+  float          euclidean_distance_cutoff;
+  float          planning_tree_resolution;
+  float          distance_penalty;
+  float          greedy_penalty;
+  float          timeout_threshold;
+  float          max_waypoint_distance;
+  float          min_altitude;
+  float          max_altitude;
+  bool           unknown_is_occupied;
   rclcpp::Logger logger_;
 
 public:
@@ -89,7 +90,7 @@ private:
                                                               {-1, 1, 0},   {-1, 1, 1},  {0, -1, -1}, {0, -1, 0},  {0, -1, 1}, {0, 0, -1}, {0, 0, 1},
                                                               {0, 1, -1},   {0, 1, 0},   {0, 1, 1},   {1, -1, -1}, {1, -1, 0}, {1, -1, 1}, {1, 0, -1},
                                                               {1, 0, 0},    {1, 0, 1},   {1, 1, -1},  {1, 1, 0},   {1, 1, 1}};
-  float                              getNodeDepth(const octomap::OcTreeKey &key, octomap::OcTree &tree);
+  float                               getNodeDepth(const octomap::OcTreeKey &key, octomap::OcTree &tree);
 
   std::vector<octomap::OcTreeKey> getNeighborhood(const octomap::OcTreeKey &key, octomap::OcTree &tree);
 
@@ -107,8 +108,10 @@ private:
 
   DynamicEDTOctomap euclideanDistanceTransform(std::shared_ptr<octomap::OcTree> tree);
 
-  std::optional<std::pair<octomap::OcTree, std::vector<octomap::point3d>>> createPlanningTree(std::shared_ptr<octomap::OcTree> tree,
-                                                                                              const octomap::point3d &start, float resolution);
+  std::shared_ptr<octomap::OcTree> createPlanningTree(std::shared_ptr<octomap::OcTree> tree, float resolution);
+
+  std::vector<octomap::point3d> createEscapeTunnel(const std::shared_ptr<octomap::OcTree> mapping_tree, const std::shared_ptr<octomap::OcTree> planning_tree,
+                                                   const octomap::point3d &start);
 
   std::pair<octomap::point3d, bool> generateTemporaryGoal(const octomap::point3d &start, const octomap::point3d &goal, octomap::OcTree &tree);
 
