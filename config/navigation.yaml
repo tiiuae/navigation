@@ -1,10 +1,11 @@
 planning:
-  euclidean_distance_cutoff: 4.0 # [m]
-  safe_obstacle_distance: 3.2 # [m]
+  euclidean_distance_cutoff: 2.0 # [m]
+  safe_obstacle_distance: 2.0 # [m]
   unknown_is_occupied: false
   navigation_tolerance: 0.4 # [m]
   min_altitude: 1.0 # [m]
   max_altitude: 10.0 # [m]
+  ground_cutoff: 0.7 # [m] obstacles below this threshold will not be added to the planning map
   max_goal_distance: 50.0 # [m]
   distance_penalty: 1.0
   greedy_penalty: 1.0
@@ -16,7 +17,7 @@ planning:
   replanning_distance: 15.0 # [m] Euclidean distance from first waypoint
   override_previous_commands: true # new GOTO will override all previous actions
   main_update_rate: 10.0 # [Hz] 
-  diagnostics_rate: 1.0 # [Hz] 
+  diagnostics_rate: 1.0 # [Hz]
 
 visualization:
   visualize_planner: true
@@ -28,5 +29,5 @@ visualization:
 
 bumper:
   enabled: true
-  distance_factor: 0.2 # virtual bumper will intervene at (safe_obstacle_distance * bumper_distance_factor)
+  distance_factor: 0.9 # virtual bumper will intervene at (safe_obstacle_distance * bumper_distance_factor)
   min_replan_period: 0.5 # [s] avoidance won't be replanned with a shorter period than this

@@ -62,20 +62,22 @@ class AstarPlanner {
 
 public:
   AstarPlanner(float safe_obstacle_distance, float euclidean_distance_cutoff, float planning_tree_resolution, float distance_penalty, float greedy_penalty,
-               float min_altitude, float max_altitude, float timeout_threshold, float max_waypoint_distance, bool unknown_is_occupied,
+               float min_altitude, float max_altitude, float ground_cutoff, float timeout_threshold, float max_waypoint_distance, bool unknown_is_occupied,
                const rclcpp::Logger &logger);
 
 private:
-  float          safe_obstacle_distance;
-  float          euclidean_distance_cutoff;
-  float          planning_tree_resolution;
-  float          distance_penalty;
-  float          greedy_penalty;
-  float          timeout_threshold;
-  float          max_waypoint_distance;
-  float          min_altitude;
-  float          max_altitude;
-  bool           unknown_is_occupied;
+  float safe_obstacle_distance;
+  float euclidean_distance_cutoff;
+  float planning_tree_resolution;
+  float distance_penalty;
+  float greedy_penalty;
+  float timeout_threshold;
+  float max_waypoint_distance;
+  float min_altitude;
+  float max_altitude;
+  float ground_cutoff;
+  bool  unknown_is_occupied;
+
   rclcpp::Logger logger_;
 
 public:
@@ -112,6 +114,9 @@ private:
 
   std::vector<octomap::point3d> createEscapeTunnel(const std::shared_ptr<octomap::OcTree> mapping_tree, const std::shared_ptr<octomap::OcTree> planning_tree,
                                                    const octomap::point3d &start);
+
+  std::vector<octomap::point3d> createVerticalTunnel(const std::shared_ptr<octomap::OcTree> mapping_tree, const std::shared_ptr<octomap::OcTree> planning_tree,
+                                                     const octomap::point3d &start);
 
   std::pair<octomap::point3d, bool> generateTemporaryGoal(const octomap::point3d &start, const octomap::point3d &goal, octomap::OcTree &tree);
 
