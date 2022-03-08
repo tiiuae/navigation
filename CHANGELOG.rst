@@ -2,6 +2,35 @@
 Changelog for package navigation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+0.1.1 (2022-03-03)
+-----------
+* better printing of waypoints
+* added gps_waypoint service into action_client_node
+* added cancel request into action_client_node
+* removed checking for too short path
+* waypoints are now cleared correctly after mission is finished
+* goal feedback will now be published periodically
+* [action_server]: working version, tested in simulations
+* [action_server]: barebones version working
+* [action_server]: wip
+* rewrote to use action server of control interface instead of services
+* added skeleton for control_interface action_client
+* Fixed install of include folder
+* minor update to reflect new mission states in control interface
+* update for the stopped mission state from control interface
+* removed unnecesary declarations of function
+* refactored the diagnostics message to use enums
+* in case a waypoint/path is rejected, the reason will now be correctly returned and printed
+* perform a vertical bounce if path begins outside octomap
+* updated new fog_msgs/srv/Vec4 type handling
+* removed unnecessary installing of folder in Cmakelist
+* update to new mission_progress msg
+* when ending avoiding manoeuvre, the state will switch directly to planning if there are any waypoints left (to idle else)
+* state will now switch to not_ready when bumper data is missing and bumper is enabled
+* fixed crash when no bumper message is received before switching to idle, added some more checks
+* fixed conflicts with mission-engine -> make status to be in UPPERCASE letters
+* Contributors: Matouš Vrba, Vojtech Spurny, stibipet
+
 0.1.0 (2022-02-02)
 -----------
 * prevent temporary goal generation from skipping octree frontiers

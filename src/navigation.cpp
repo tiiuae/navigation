@@ -1564,7 +1564,7 @@ namespace navigation
   {
     RCLCPP_INFO_STREAM(get_logger(), "Sending waypoints to command_interface:");
     for (const auto& w : waypoints)
-      RCLCPP_INFO_STREAM(get_logger(), "       " << w.transpose());
+      RCLCPP_INFO(get_logger(), "       [%7.2f, %7.2f, %7.2f, %7.2f]", w.x(), w.y(), w.z(), w.w());
     visualizePath(waypoints);
     publishFutureTrajectory(waypoints);
     const auto goal = waypointsToGoal(waypoints);
