@@ -16,8 +16,8 @@ namespace navigation
 
 enum TreeValue
 {
-  OCCUPIED = 0,
-  FREE     = 1
+  FREE     = -1,
+  OCCUPIED = 1
 };
 
 enum PlanningResult
@@ -83,8 +83,9 @@ private:
 public:
   std::pair<std::vector<octomap::point3d>, PlanningResult> findPath(
       const octomap::point3d &start_coord, const octomap::point3d &goal_coord, std::shared_ptr<octomap::OcTree> mapping_tree, float timeout,
-      std::function<void(const octomap::OcTree &)> visualizeTree,
-      std::function<void(const std::unordered_set<Node, HashFunction> &, const std::unordered_set<Node, HashFunction> &, const octomap::OcTree &)>
+      std::function<void(const std::shared_ptr<octomap::OcTree> &)> visualizeTree,
+      std::function<void(const std::unordered_set<Node, HashFunction> &, const std::unordered_set<Node, HashFunction> &,
+                         const std::shared_ptr<octomap::OcTree> &)>
           visualizeExpansions);
 
 private:
@@ -92,21 +93,21 @@ private:
                                                               {-1, 1, 0},   {-1, 1, 1},  {0, -1, -1}, {0, -1, 0},  {0, -1, 1}, {0, 0, -1}, {0, 0, 1},
                                                               {0, 1, -1},   {0, 1, 0},   {0, 1, 1},   {1, -1, -1}, {1, -1, 0}, {1, -1, 1}, {1, 0, -1},
                                                               {1, 0, 0},    {1, 0, 1},   {1, 1, -1},  {1, 1, 0},   {1, 1, 1}};
-  float                               getNodeDepth(const octomap::OcTreeKey &key, octomap::OcTree &tree);
+  float                               getNodeDepth(const octomap::OcTreeKey &key, std::shared_ptr<octomap::OcTree> tree);
 
-  std::vector<octomap::OcTreeKey> getNeighborhood(const octomap::OcTreeKey &key, octomap::OcTree &tree);
+  std::vector<octomap::OcTreeKey> getNeighborhood(const octomap::OcTreeKey &key, std::shared_ptr<octomap::OcTree> tree);
 
   octomap::OcTreeKey expand(const octomap::OcTreeKey &key, const std::vector<int> &direction);
 
   float distEuclidean(const octomap::point3d &p1, const octomap::point3d &p2);
 
-  float distEuclidean(const octomap::OcTreeKey &k1, const octomap::OcTreeKey &k2, octomap::OcTree &tree);
+  float distEuclidean(const octomap::OcTreeKey &k1, const octomap::OcTreeKey &k2, std::shared_ptr<octomap::OcTree> tree);
 
-  bool freeStraightPath(const octomap::point3d p1, const octomap::point3d p2, octomap::OcTree &tree);
+  bool freeStraightPath(const octomap::point3d p1, const octomap::point3d p2, std::shared_ptr<octomap::OcTree> tree);
 
   std::vector<octomap::OcTreeKey> backtrackPathKeys(const Node &start, const Node &end, std::unordered_map<Node, Node, HashFunction> &parent_map);
 
-  std::vector<octomap::point3d> keysToCoords(std::vector<octomap::OcTreeKey> keys, octomap::OcTree &tree);
+  std::vector<octomap::point3d> keysToCoords(std::vector<octomap::OcTreeKey> keys, std::shared_ptr<octomap::OcTree> tree);
 
   DynamicEDTOctomap euclideanDistanceTransform(std::shared_ptr<octomap::OcTree> tree);
 
@@ -115,16 +116,14 @@ private:
   std::vector<octomap::point3d> createEscapeTunnel(const std::shared_ptr<octomap::OcTree> mapping_tree, const std::shared_ptr<octomap::OcTree> planning_tree,
                                                    const octomap::point3d &start);
 
-  std::vector<octomap::point3d> createVerticalTunnel(const std::shared_ptr<octomap::OcTree> mapping_tree, const std::shared_ptr<octomap::OcTree> planning_tree,
-                                                     const octomap::point3d &start);
+  std::vector<octomap::point3d> createVerticalTunnel(const std::shared_ptr<octomap::OcTree> mapping_tree, const octomap::point3d &start);
 
-  std::pair<octomap::point3d, bool> generateTemporaryGoal(const octomap::point3d &start, const octomap::point3d &goal, octomap::OcTree &tree);
+  std::pair<octomap::point3d, bool> generateTemporaryGoal(const octomap::point3d &start, const octomap::point3d &goal, std::shared_ptr<octomap::OcTree> tree);
 
-  std::vector<octomap::point3d> filterPath(const std::vector<octomap::point3d> &waypoints, octomap::OcTree &tree);
+  std::vector<octomap::point3d> filterPath(const std::vector<octomap::point3d> &waypoints, std::shared_ptr<octomap::OcTree> tree, bool append_endpoint);
 
-  std::vector<octomap::point3d> prepareOutputPath(const std::vector<octomap::OcTreeKey> &keys, octomap::OcTree &tree);
+  std::vector<octomap::point3d> prepareOutputPath(const std::vector<octomap::OcTreeKey> &keys, std::shared_ptr<octomap::OcTree> tree, bool append_endpoint);
 
-  /* geometry_msgs::msg::Quaternion yawToQuaternionMsg(const float &yaw); */
 };
 
 }  // namespace navigation

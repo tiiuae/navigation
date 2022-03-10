@@ -21,7 +21,7 @@ planning:
 
 visualization:
   visualize_planner: true
-  show_unoccupied: true
+  show_unoccupied: false
   tree_points_scale: 0.22
   expansions_points_scale: 0.15
   path_points_scale: 0.18

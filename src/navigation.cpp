@@ -166,22 +166,22 @@ namespace navigation
     void actionServerHandleAccepted(const std::shared_ptr<NavigationGoalHandle> goal_handle);
 
     // params
-    double euclidean_distance_cutoff_;
-    double safe_obstacle_distance_;
-    double navigation_tolerance_;
+    float euclidean_distance_cutoff_;
+    float safe_obstacle_distance_;
+    float navigation_tolerance_;
     bool unknown_is_occupied_;
-    double min_altitude_;
-    double max_altitude_;
-    double ground_cutoff_;
-    double max_goal_distance_;
-    double distance_penalty_;
-    double greedy_penalty_;
-    double planning_tree_resolution_;
-    double max_waypoint_distance_;
-    double max_heading_step_;
-    double planning_timeout_;
+    float min_altitude_;
+    float max_altitude_;
+    float ground_cutoff_;
+    float max_goal_distance_;
+    float distance_penalty_;
+    float greedy_penalty_;
+    float planning_tree_resolution_;
+    float max_waypoint_distance_;
+    float max_heading_step_;
+    float planning_timeout_;
+    float replanning_distance_;
     int replanning_limit_;
-    double replanning_distance_;
     double main_update_rate_;
     double diagnostics_rate_;
 
@@ -251,9 +251,9 @@ namespace navigation
     void pathFutureCallback(rclcpp::Client<fog_msgs::srv::PathToLocal>::SharedFuture future, const std::shared_ptr<NavigationGoalHandle> goal_handle);
 
     // visualization
-    void visualizeTree(const octomap::OcTree& tree);
+    void visualizeTree(const std::shared_ptr<octomap::OcTree> tree);
     void visualizeExpansions(const std::unordered_set<navigation::Node, HashFunction> open, const std::unordered_set<navigation::Node, HashFunction>& closed,
-                             const octomap::OcTree& tree);
+                             const std::shared_ptr<octomap::OcTree> tree);
     void visualizePath(const std::vector<vec4_t>& waypoints);
     void visualizeGoals(const std::deque<vec4_t>& waypoints);
 
@@ -1546,7 +1546,7 @@ namespace navigation
   // control_ac_mutex_
   std::shared_future<ControlGoalHandle::SharedPtr> Navigation::commandWaypoints(const std::vector<vec4_t>& waypoints)
   {
-    RCLCPP_INFO_STREAM(get_logger(), "Sending waypoints to command_interface:");
+    RCLCPP_INFO_STREAM(get_logger(), "Sending waypoints to control_interface:");
     for (const auto& w : waypoints)
       RCLCPP_INFO(get_logger(), "       [%7.2f, %7.2f, %7.2f, %7.2f]", w.x(), w.y(), w.z(), w.w());
     visualizePath(waypoints);
@@ -1702,7 +1702,7 @@ namespace navigation
   /* visualization //{ */
 
   /* visualizeTree //{ */
-  void Navigation::visualizeTree(const octomap::OcTree& tree)
+  void Navigation::visualizeTree(const std::shared_ptr<octomap::OcTree> tree)
   {
     RCLCPP_INFO_ONCE(get_logger(), "Visualizing tree");
     visualization_msgs::msg::Marker msg;
@@ -1716,9 +1716,9 @@ namespace navigation
     msg.scale.x = tree_points_scale_;
     msg.scale.y = tree_points_scale_;
 
-    for (auto it = tree.begin(); it != tree.end(); it++)
+    for (auto it = tree->begin(); it != tree->end(); it++)
     {
-      if (it->getValue() == TreeValue::OCCUPIED)
+      if (tree->isNodeOccupied(*it))
       {
         geometry_msgs::msg::Point gp;
         auto color = generateColor(0, 0, 0, 1.0);
@@ -1744,7 +1744,7 @@ namespace navigation
 
   /* visualizeExpansions //{ */
   void Navigation::visualizeExpansions(const std::unordered_set<navigation::Node, HashFunction> open,
-                                       const std::unordered_set<navigation::Node, HashFunction>& closed, const octomap::OcTree& tree)
+                                       const std::unordered_set<navigation::Node, HashFunction>& closed, const std::shared_ptr<octomap::OcTree> tree)
   {
     RCLCPP_INFO_ONCE(get_logger(), "Visualizing open planning expansions");
     visualization_msgs::msg::Marker msg;
@@ -1775,7 +1775,7 @@ namespace navigation
 
     for (auto it = open.begin(); it != open.end(); it++)
     {
-      auto coords = tree.keyToCoord(it->key);
+      auto coords = tree->keyToCoord(it->key);
       geometry_msgs::msg::Point gp;
       double brightness = (it->total_cost - min_cost) / (max_cost - min_cost);
       auto color = generateColor(0.0, brightness, 0.3, 0.8);
@@ -1788,7 +1788,7 @@ namespace navigation
 
     for (auto it = closed.begin(); it != closed.end(); it++)
     {
-      auto coords = tree.keyToCoord(it->key);
+      auto coords = tree->keyToCoord(it->key);
       geometry_msgs::msg::Point gp;
       auto color = generateColor(0.8, 0.0, 0, 0.8);
       gp.x = coords.x();
@@ -1815,23 +1815,17 @@ namespace navigation
     msg.pose.orientation.w = 1.0;
     msg.scale.x = path_points_scale_;
 
-    const vec4_t uav_pose = get_mutexed(uav_pose_mutex_, uav_pose_);
-    std::vector<vec4_t> tmp_waypoints;
-    tmp_waypoints.push_back(uav_pose);
-    for (auto& w : waypoints)
-      tmp_waypoints.push_back(w);
-
-    for (size_t i = 1; i < tmp_waypoints.size(); i++)
+    for (size_t i = 1; i < waypoints.size(); i++)
     {
       geometry_msgs::msg::Point p1, p2;
       std_msgs::msg::ColorRGBA c;
-      p1.x = tmp_waypoints[i - 1].x();
-      p1.y = tmp_waypoints[i - 1].y();
-      p1.z = tmp_waypoints[i - 1].z();
-      p2.x = tmp_waypoints[i].x();
-      p2.y = tmp_waypoints[i].y();
-      p2.z = tmp_waypoints[i].z();
-      c = generateColor(0.1, double(i) / double(tmp_waypoints.size()), 0.1, 1);
+      p1.x = waypoints[i - 1].x();
+      p1.y = waypoints[i - 1].y();
+      p1.z = waypoints[i - 1].z();
+      p2.x = waypoints[i].x();
+      p2.y = waypoints[i].y();
+      p2.z = waypoints[i].z();
+      c = generateColor(0.1, double(i) / double(waypoints.size()), 0.1, 1);
       msg.points.push_back(p1);
       msg.points.push_back(p2);
       msg.colors.push_back(c);
