@@ -173,7 +173,8 @@ class NavigationActionClient(Node):
         elif status == GoalStatus.STATUS_CANCELED:
             self.get_logger().error('Goal canceled! Result: {0}'.format(result.message))
 
-        self._goal_handle = None
+        if self._goal_handle.goal_id == future.result().goal_id:
+            self._goal_handle = None
 
     def feedback_callback(self, feedback_msg):
         feedback = feedback_msg.feedback
