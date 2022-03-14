@@ -1155,6 +1155,10 @@ namespace navigation
   
     visualizeGoals(waypoints_in_);
 
+    const vec4_t uav_pose = get_mutexed(uav_pose_mutex_, uav_pose_);
+    RCLCPP_INFO(get_logger(), "Current position: [%7.2f, %7.2f, %7.2f, %7.2f]", uav_pose.x(), uav_pose.y(), uav_pose.z(), uav_pose.w());
+    RCLCPP_INFO(get_logger(), "Current nav_goal: [%7.2f, %7.2f, %7.2f, %7.2f]", goal.x(), goal.y(), goal.z(), goal.w());
+
     // start the actual nav_state_t::planning
     const auto [planned_path, goal_reached] = planPath(goal, octree_);
     // evaluate the result of path planning
