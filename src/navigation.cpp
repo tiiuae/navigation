@@ -128,6 +128,8 @@ namespace navigation
     // bumper-related variables
     std::shared_mutex bumper_mutex_;
     std::shared_ptr<fog_msgs::msg::ObstacleSectors> bumper_msg_ = nullptr;
+    bool bumper_active_ = false;
+    bool bumper_obstacle_detected_ = false;
 
     std::shared_mutex state_mutex_;
     nav_state_t state_ = nav_state_t::not_ready;
@@ -1009,7 +1011,7 @@ namespace navigation
   /* diagnosticsRoutine //{ */
   void Navigation::diagnosticsRoutine()
   {
-    std::scoped_lock lck(state_mutex_, waypoints_mutex_, action_server_mutex_);
+    std::scoped_lock lck(state_mutex_, bumper_mutex_, waypoints_mutex_, action_server_mutex_);
     publishDiagnostics();
     update_goal(action_server_goal_handle_, waypoint_current_it_, waypoints_in_.size());
   }
@@ -1020,26 +1022,14 @@ namespace navigation
   /* state_navigation_common() method //{ */
   void Navigation::state_navigation_common()
   {
-    if (state_ == nav_state_t::not_ready)
-      return;
-
-    // common checks for all states except unitialized
-    const vehicle_state_t control_vehicle_state = get_mutexed(control_diags_mutex_, control_vehicle_state_);
-    if (control_vehicle_state != vehicle_state_t::autonomous_flight)
-    {
-      RCLCPP_INFO(get_logger(), "Vehicle no longer in autonomous flight. Clearing waypoints and switching to not_ready.");
-      waypoints_in_.clear();
-      waypoint_current_it_ = 0;
-      waypoint_state_ = waypoint_state_t::empty;
-      state_ = nav_state_t::not_ready;
-      abort_goal(action_server_goal_handle_, "Vehicle no longer in autonomous flight.");
-      return;
-    }
-
+    // bumper is always checked even when the vehicle is on the ground
     const auto bumper_msg = get_mutexed(bumper_mutex_, bumper_msg_);
     if (bumper_enabled_)
     {
       const bool bumper_data_old = bumperDataOld(bumper_msg);
+      const bool obstacle_detected = bumperCheckObstacles(bumper_msg);
+
+      // if the data is old and navigation is doing something, abort it - flight may be dangerous
       if (state_ != nav_state_t::not_ready && bumper_data_old)
       {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Missing fresh bumper data calling hover and switching to not_ready.");
@@ -1049,15 +1039,30 @@ namespace navigation
         return;
       }
 
-      if (state_ != nav_state_t::avoiding && !bumper_data_old)
+      // if applicable, check for obstacles and switch to avoiding
+      if (state_ != nav_state_t::not_ready && state_ != nav_state_t::avoiding && !bumper_data_old && obstacle_detected)
       {
-        const bool obstacle_detected = bumperCheckObstacles(bumper_msg);
-        if (obstacle_detected)
-        {
-          RCLCPP_WARN(get_logger(), "Obstacle detected! Switching to avoiding.");
-          state_ = nav_state_t::avoiding;
-        }
+        RCLCPP_WARN(get_logger(), "Obstacle detected! Switching to avoiding.");
+        state_ = nav_state_t::avoiding;
       }
+
+      set_mutexed(bumper_mutex_,
+          std::make_tuple(!bumper_data_old, obstacle_detected),
+          std::forward_as_tuple(bumper_active_, bumper_obstacle_detected_)
+          );
+    }
+  
+    // check that the vehicle is still autonomously flying and switch to not_ready if applicable
+    const vehicle_state_t control_vehicle_state = get_mutexed(control_diags_mutex_, control_vehicle_state_);
+    if (state_ != nav_state_t::not_ready && control_vehicle_state != vehicle_state_t::autonomous_flight)
+    {
+      RCLCPP_INFO(get_logger(), "Vehicle no longer in autonomous flight. Clearing waypoints and switching to not_ready.");
+      waypoints_in_.clear();
+      waypoint_current_it_ = 0;
+      waypoint_state_ = waypoint_state_t::empty;
+      state_ = nav_state_t::not_ready;
+      abort_goal(action_server_goal_handle_, "Vehicle no longer in autonomous flight.");
+      return;
     }
   }
   //}
@@ -1135,6 +1140,10 @@ namespace navigation
                        "Waypoint " << goal.transpose() << " set as the next goal #" << waypoint_current_it_ << "/" << waypoints_in_.size() << ".");
 
     visualizeGoals(waypoints_in_);
+
+    const vec4_t uav_pose = get_mutexed(uav_pose_mutex_, uav_pose_);
+    RCLCPP_INFO(get_logger(), "Current position: [%7.2f, %7.2f, %7.2f, %7.2f]", uav_pose.x(), uav_pose.y(), uav_pose.z(), uav_pose.w());
+    RCLCPP_INFO(get_logger(), "Current nav_goal: [%7.2f, %7.2f, %7.2f, %7.2f]", goal.x(), goal.y(), goal.z(), goal.w());
 
     // start the actual nav_state_t::planning
     const auto [planned_path, goal_reached] = planPath(goal, octree_);
@@ -1651,6 +1660,7 @@ namespace navigation
   /* publishDiagnostics //{ */
   // the caller must lock the following muteces:
   // state_mutex_
+  // bumper_mutex_
   // octree_mutex_
   // waypoints_mutex_
   void Navigation::publishDiagnostics()
@@ -1674,6 +1684,9 @@ namespace navigation
       msg.waypoint.y = nand;
       msg.waypoint.z = nand;
     }
+
+    msg.bumper_active = bumper_active_;
+    msg.obstacle_detected = bumper_obstacle_detected_;
     diagnostics_publisher_->publish(msg);
   }
   //}
