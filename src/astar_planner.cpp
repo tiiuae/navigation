@@ -103,8 +103,37 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
               std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - time_start_planning_tree).count());
   visualizeTree(planning_tree);
 
+  /* check if planning start is within altitude bounds //{ */
+  if (start_coord.z() < min_altitude) {
+    RCLCPP_INFO(logger_, "[Astar]: Start is below minimum altitude, creating a temporary goal to force vertical movement");
+    octomap::point3d temp_goal;
+    temp_goal.x() = start_coord.x();
+    temp_goal.y() = start_coord.y();
+    temp_goal.z() = min_altitude + planning_tree_resolution;
+
+    std::vector<octomap::point3d> vertical_path;
+    vertical_path.push_back(start_coord);
+    vertical_path.push_back(temp_goal);
+    return {vertical_path, INCOMPLETE};
+  }
+
+  if (start_coord.z() > max_altitude) {
+    RCLCPP_INFO(logger_, "[Astar]: Start is above maximum altitude, creating a temporary goal to force vertical movement");
+    octomap::point3d temp_goal;
+    temp_goal.x() = start_coord.x();
+    temp_goal.y() = start_coord.y();
+    temp_goal.z() = max_altitude - planning_tree_resolution;
+
+    std::vector<octomap::point3d> vertical_path;
+    vertical_path.push_back(start_coord);
+    vertical_path.push_back(temp_goal);
+    return {vertical_path, INCOMPLETE};
+  }
+  //}
+
   /* check if planning start is in octomap //{ */
   const auto start_query = planning_tree->search(start_coord);
+
   if (start_query == nullptr) {
 
     RCLCPP_INFO(logger_, "[Astar]: Start is outside of map, creating a temporary goal to force vertical movement");
