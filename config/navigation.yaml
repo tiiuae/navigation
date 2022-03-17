@@ -5,6 +5,7 @@ planning:
   navigation_tolerance: 0.4 # [m]
   min_altitude: 1.0 # [m]
   max_altitude: 10.0 # [m]
+  ground_cutoff: 0.7 # [m] obstacles below this threshold will not be added to the planning map
   max_goal_distance: 50.0 # [m]
   distance_penalty: 1.0
   greedy_penalty: 1.0
@@ -16,7 +17,7 @@ planning:
   replanning_distance: 15.0 # [m] Euclidean distance from first waypoint
   override_previous_commands: true # new GOTO will override all previous actions
   main_update_rate: 10.0 # [Hz] 
-  diagnostics_rate: 1.0 # [Hz] 
+  diagnostics_rate: 1.0 # [Hz]
 
 visualization:
   visualize_planner: true
