@@ -1,33 +1,23 @@
-# fog-sw BUILDER
-ARG FROM_IMAGE
-FROM $FROM_IMAGE as fog-sw-builder
-ARG ROS_DISTRO="galactic"
-ARG UID=1000
-ARG GID=1000
-ARG PACKAGE_NAME
+FROM ghcr.io/tiiuae/fog-ros-baseimage:builder-latest AS builder
 
-WORKDIR /$PACKAGE_NAME/main_ws
-USER root
-ADD . /$PACKAGE_NAME/main_ws/src
-RUN chown -R builder:builder /$PACKAGE_NAME/main_ws
+COPY . /main_ws/src/
 
-USER builder
+# this:
+# 1) builds the application
+# 2) packages the application as .deb
+# 3) writes the .deb packages to build_output/
+RUN /packaging/build.sh
 
-RUN if [ -e /$PACKAGE_NAME/deps_ws ]; then \
-        . /$PACKAGE_NAME/deps_ws/install/setup.sh && \
-        colcon build; \
-    elif [ -e /opt/ros/${ROS_DISTRO}/setup.sh ]; then \
-        . /opt/ros/${ROS_DISTRO}/setup.sh && \
-        colcon build; \
-    fi 
+#  ▲               runtime ──┐
+#  └── build                 ▼
 
-RUN sed --in-place \
-      's|^source .*|source "/'$PACKAGE_NAME'/main_ws/install/setup.bash"|' \
-      /$PACKAGE_NAME/entrypoint.sh && \  
-        chmod +x /$PACKAGE_NAME/entrypoint.sh
+FROM ghcr.io/tiiuae/fog-ros-baseimage:sha-d2cdcdb
 
-ENV PACKAGE_NAME $PACKAGE_NAME
-ENV RMW_IMPLEMENTATION rmw_fastrtps_cpp
+ENTRYPOINT /entrypoint.sh
 
-WORKDIR /$PACKAGE_NAME
-ENTRYPOINT "/"$PACKAGE_NAME"/entrypoint.sh"
+COPY entrypoint.sh /entrypoint.sh
+
+COPY --from=builder /main_ws/ros-*-navigation_*_amd64.deb /navigation.deb
+
+RUN apt update && apt install -y --no-install-recommends ./navigation.deb \
+	&& rm /navigation.deb
