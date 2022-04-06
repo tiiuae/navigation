@@ -1,62 +1,38 @@
-name: main
+name: Build
 
 on:
   push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
 
 jobs:
-  tii-deb-build:
+  build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        ros2_distro: [galactic]
     steps:
+      - uses: actions/checkout@v2
 
-      - name: Checkout navigation
-        uses: actions/checkout@v2
+      - uses: docker/setup-buildx-action@v1
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v3
         with:
-          path: navigation
+          images: ghcr.io/tiiuae/tii-navigation
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha
+            type=raw,value=latest
 
-      # Run docker build
-      - name: Run navigation docker build
-        env:
-          ROS: 1
-          ROS_DISTRO: ${{ matrix.ros2_distro }}
-          PACKAGE_NAME: navigation
-        run: |
-          set -eux
-          mkdir bin
-          pushd navigation
-          ./build.sh ../bin/
-          popd
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: jfrog/setup-jfrog-cli@v2
-        env:
-          JF_ARTIFACTORY_1: ${{ secrets.ARTIFACTORY_TOKEN }}
-
-      - name: Upload to Artifactory
-        env:
-          ARTIFACTORY_REPO: debian-public-local
-          DISTRIBUTION: focal
-          COMPONENT: fog-sw
-          ARCHITECTURE: amd64
-          BUILD_NAME: navigation
-          CI: true
-        if: github.event_name == 'push'
-        run: |
-          set -exu
-          jfrog rt ping
-          pkg=$(find bin -name 'ros-${{ matrix.ros2_distro }}-navigation*.deb')
-          pkg_name=$(basename $pkg)
-          jfrog rt u --deb "$DISTRIBUTION/$COMPONENT/$ARCHITECTURE" \
-                     --target-props COMMIT="$GITHUB_SHA" \
-                     --build-name "$BUILD_NAME" \
-                     --build-number "$GITHUB_SHA" \
-                     "$pkg" \
-                     "$ARTIFACTORY_REPO/$pkg_name"
-          jfrog rt build-publish "$BUILD_NAME" "$GITHUB_SHA"
-          jfrog rt bpr "$BUILD_NAME" "$GITHUB_SHA" "$ARTIFACTORY_REPO" \
-                       --status dev \
-                       --comment "development build"
+      - name: Build container image and push
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
