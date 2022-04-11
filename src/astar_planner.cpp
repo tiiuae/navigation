@@ -408,16 +408,10 @@ bool AstarPlanner::freeStraightPath(const octomap::point3d p1, const octomap::po
   octomap::KeyRay ray;
   tree->computeRayKeys(p1, p2, ray);
 
-  octomap::OcTreeKey p2_key = tree->coordToKey(p2);
-
   for (const auto &k : ray) {
     auto query = tree->search(k);
-    if (query == NULL || query->getOccupancy() >= tree->getOccupancyThres()) {
+    if (query == NULL || tree->isNodeOccupied(query)) {
       return false;
-    }
-
-    if (k == p2_key) {
-      return true;
     }
   }
   return true;
@@ -641,6 +635,8 @@ std::vector<octomap::point3d> AstarPlanner::filterPath(const std::vector<octomap
 
   filtered.push_back(waypoints.front());
 
+  tree->expand();
+
   size_t k = 2;
 
   while (k < waypoints.size()) {
@@ -651,6 +647,8 @@ std::vector<octomap::point3d> AstarPlanner::filterPath(const std::vector<octomap
 
     k++;
   }
+
+  tree->prune();
 
   if (append_endpoint) {
     filtered.push_back(waypoints.back());
