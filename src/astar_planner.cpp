@@ -396,8 +396,6 @@ float AstarPlanner::distEuclidean(const octomap::OcTreeKey &k1, const octomap::O
 /* freeStraightPath() //{ */
 
 bool AstarPlanner::freeStraightPath(const octomap::point3d p1, const octomap::point3d p2, std::shared_ptr<octomap::OcTree> tree) {
-  octomap::KeyRay ray;
-  tree->computeRayKeys(p1, p2, ray);
 
   if (tree->search(p1) == NULL) {
     return false;
@@ -407,11 +405,14 @@ bool AstarPlanner::freeStraightPath(const octomap::point3d p1, const octomap::po
     return false;
   }
 
+  octomap::KeyRay ray;
+  tree->computeRayKeys(p1, p2, ray);
+
   octomap::OcTreeKey p2_key = tree->coordToKey(p2);
 
   for (const auto &k : ray) {
     auto query = tree->search(k);
-    if (query == NULL || tree->isNodeOccupied(query)) {
+    if (query == NULL || query->getOccupancy() >= tree->getOccupancyThres()) {
       return false;
     }
 
