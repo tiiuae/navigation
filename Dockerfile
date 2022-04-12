@@ -4,8 +4,7 @@ COPY . /main_ws/src/
 
 # this:
 # 1) builds the application
-# 2) packages the application as .deb
-# 3) writes the .deb packages to build_output/
+# 2) packages the application as .deb & writes it to /main_ws/
 RUN /packaging/build.sh
 
 #  ▲               runtime ──┐
