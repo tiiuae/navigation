@@ -62,8 +62,8 @@ class AstarPlanner {
 
 public:
   AstarPlanner(float safe_obstacle_distance, float euclidean_distance_cutoff, float planning_tree_resolution, float distance_penalty, float greedy_penalty,
-               float min_altitude, float max_altitude, float ground_cutoff, float timeout_threshold, float max_waypoint_distance, bool unknown_is_occupied,
-               const rclcpp::Logger &logger);
+               float min_altitude, float max_altitude, float ground_cutoff, float timeout_threshold, float max_waypoint_distance,
+               float altitude_acceptance_radius, bool unknown_is_occupied, const rclcpp::Logger &logger);
 
 private:
   float safe_obstacle_distance;
@@ -76,6 +76,7 @@ private:
   float min_altitude;
   float max_altitude;
   float ground_cutoff;
+  float altitude_acceptance_radius;
   bool  unknown_is_occupied;
 
   rclcpp::Logger logger_;
@@ -123,7 +124,6 @@ private:
   std::vector<octomap::point3d> filterPath(const std::vector<octomap::point3d> &waypoints, std::shared_ptr<octomap::OcTree> tree, bool append_endpoint);
 
   std::vector<octomap::point3d> prepareOutputPath(const std::vector<octomap::OcTreeKey> &keys, std::shared_ptr<octomap::OcTree> tree, bool append_endpoint);
-
 };
 
 }  // namespace navigation

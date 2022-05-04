@@ -58,19 +58,20 @@ bool LeafComparator::operator()(const std::pair<octomap::OcTree::iterator, float
 /* AstarPlanner constructor //{ */
 AstarPlanner::AstarPlanner(float safe_obstacle_distance, float euclidean_distance_cutoff, float planning_tree_resolution, float distance_penalty,
                            float greedy_penalty, float min_altitude, float max_altitude, float ground_cutoff, float timeout_threshold,
-                           float max_waypoint_distance, bool unknown_is_occupied, const rclcpp::Logger &logger)
+                           float max_waypoint_distance, float altitude_acceptance_radius, bool unknown_is_occupied, const rclcpp::Logger &logger)
     : logger_(logger) {
-  this->safe_obstacle_distance    = safe_obstacle_distance;
-  this->euclidean_distance_cutoff = euclidean_distance_cutoff;
-  this->planning_tree_resolution  = planning_tree_resolution;
-  this->distance_penalty          = distance_penalty;
-  this->greedy_penalty            = greedy_penalty;
-  this->min_altitude              = min_altitude;
-  this->max_altitude              = max_altitude;
-  this->ground_cutoff             = ground_cutoff;
-  this->timeout_threshold         = timeout_threshold;
-  this->max_waypoint_distance     = max_waypoint_distance;
-  this->unknown_is_occupied       = unknown_is_occupied;
+  this->safe_obstacle_distance     = safe_obstacle_distance;
+  this->euclidean_distance_cutoff  = euclidean_distance_cutoff;
+  this->planning_tree_resolution   = planning_tree_resolution;
+  this->distance_penalty           = distance_penalty;
+  this->greedy_penalty             = greedy_penalty;
+  this->min_altitude               = min_altitude;
+  this->max_altitude               = max_altitude;
+  this->ground_cutoff              = ground_cutoff;
+  this->timeout_threshold          = timeout_threshold;
+  this->max_waypoint_distance      = max_waypoint_distance;
+  this->altitude_acceptance_radius = altitude_acceptance_radius;
+  this->unknown_is_occupied        = unknown_is_occupied;
 }
 //}
 
@@ -109,7 +110,7 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
     octomap::point3d temp_goal;
     temp_goal.x() = start_coord.x();
     temp_goal.y() = start_coord.y();
-    temp_goal.z() = min_altitude + planning_tree_resolution;
+    temp_goal.z() = min_altitude + altitude_acceptance_radius;
 
     std::vector<octomap::point3d> vertical_path;
     vertical_path.push_back(start_coord);
@@ -122,7 +123,7 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
     octomap::point3d temp_goal;
     temp_goal.x() = start_coord.x();
     temp_goal.y() = start_coord.y();
-    temp_goal.z() = max_altitude - planning_tree_resolution;
+    temp_goal.z() = max_altitude - altitude_acceptance_radius;
 
     std::vector<octomap::point3d> vertical_path;
     vertical_path.push_back(start_coord);
@@ -140,7 +141,7 @@ std::pair<std::vector<octomap::point3d>, PlanningResult> AstarPlanner::findPath(
     octomap::point3d temp_goal;
     temp_goal.x() = start_coord.x();
     temp_goal.y() = start_coord.y();
-    temp_goal.z() = start_coord.z() + planning_tree_resolution;
+    temp_goal.z() = start_coord.z() + altitude_acceptance_radius;
 
     if (temp_goal.z() > max_altitude) {
       RCLCPP_INFO(logger_, "[Astar]: capping at max altitude");

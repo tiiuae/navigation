@@ -184,6 +184,7 @@ namespace navigation
     float planning_timeout_;
     float replanning_distance_;
     int replanning_limit_;
+    float altitude_acceptance_radius_;
     double main_update_rate_;
     double diagnostics_rate_;
 
@@ -331,6 +332,9 @@ namespace navigation
     loaded_successfully &= parse_param("bumper.enabled", bumper_enabled_, *this);
     loaded_successfully &= parse_param("bumper.distance_factor", bumper_distance_factor_, *this);
     loaded_successfully &= parse_param("bumper.min_replan_period", bumper_min_replan_period_, *this);
+    
+    // loaded from control_interface
+    loaded_successfully &= parse_param("px4.altitude_acceptance_radius", altitude_acceptance_radius_, *this);
 
     if (!loaded_successfully)
     {
@@ -1303,7 +1307,7 @@ namespace navigation
   {
     navigation::AstarPlanner planner =
         navigation::AstarPlanner(safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_,
-                                 min_altitude_, max_altitude_, ground_cutoff_, planning_timeout_, max_waypoint_distance_, unknown_is_occupied_, get_logger());
+                                 min_altitude_, max_altitude_, ground_cutoff_, planning_timeout_, max_waypoint_distance_, altitude_acceptance_radius_, unknown_is_occupied_, get_logger());
     const vec4_t uav_pose = get_mutexed(uav_pose_mutex_, uav_pose_);
     const vec4_t cmd_pose = get_mutexed(cmd_pose_mutex_, cmd_pose_);
 

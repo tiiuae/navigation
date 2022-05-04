@@ -38,6 +38,7 @@ def generate_launch_description():
                 name='navigation',
                 parameters=[
                     pkg_share_path + '/config/navigation.yaml',
+                    get_package_share_directory('control_interface') + '/config/control_interface.yaml',
                     {"use_sim_time": launch.substitutions.LaunchConfiguration("use_sim_time")},
                 ],
                 remappings=[
