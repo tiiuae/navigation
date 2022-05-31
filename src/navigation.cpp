@@ -332,7 +332,7 @@ namespace navigation
     loaded_successfully &= parse_param("bumper.enabled", bumper_enabled_, *this);
     loaded_successfully &= parse_param("bumper.distance_factor", bumper_distance_factor_, *this);
     loaded_successfully &= parse_param("bumper.min_replan_period", bumper_min_replan_period_, *this);
-    
+
     // loaded from control_interface
     loaded_successfully &= parse_param("px4.altitude_acceptance_radius", altitude_acceptance_radius_, *this);
 
@@ -1050,12 +1050,9 @@ namespace navigation
         state_ = nav_state_t::avoiding;
       }
 
-      set_mutexed(bumper_mutex_,
-          std::make_tuple(!bumper_data_old, obstacle_detected),
-          std::forward_as_tuple(bumper_active_, bumper_obstacle_detected_)
-          );
+      set_mutexed(bumper_mutex_, std::make_tuple(!bumper_data_old, obstacle_detected), std::forward_as_tuple(bumper_active_, bumper_obstacle_detected_));
     }
-  
+
     // check that the vehicle is still autonomously flying and switch to not_ready if applicable
     const vehicle_state_t control_vehicle_state = get_mutexed(control_diags_mutex_, control_vehicle_state_);
     if (state_ != nav_state_t::not_ready && control_vehicle_state != vehicle_state_t::autonomous_flight)
@@ -1305,9 +1302,9 @@ namespace navigation
   // if the path is empty and the bool is false, then the path could not be found or the found path is invalid
   std::pair<std::vector<vec4_t>, bool> Navigation::planPath(const vec4_t& goal, std::shared_ptr<octomap::OcTree> mapping_tree)
   {
-    navigation::AstarPlanner planner =
-        navigation::AstarPlanner(safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_,
-                                 min_altitude_, max_altitude_, ground_cutoff_, planning_timeout_, max_waypoint_distance_, altitude_acceptance_radius_, unknown_is_occupied_, get_logger());
+    navigation::AstarPlanner planner = navigation::AstarPlanner(
+        safe_obstacle_distance_, euclidean_distance_cutoff_, planning_tree_resolution_, distance_penalty_, greedy_penalty_, min_altitude_, max_altitude_,
+        ground_cutoff_, planning_timeout_, max_waypoint_distance_, altitude_acceptance_radius_, unknown_is_occupied_, get_logger());
     const vec4_t uav_pose = get_mutexed(uav_pose_mutex_, uav_pose_);
     const vec4_t cmd_pose = get_mutexed(cmd_pose_mutex_, cmd_pose_);
 
@@ -1468,19 +1465,35 @@ namespace navigation
     const vec4_t uav_pose = get_mutexed(uav_pose_mutex_, uav_pose_);
     const double sector_size = (2.0 * M_PI) / double(bumper_msg->n_horizontal_sectors);
     const vec3_t forward = vec3_t::UnitX();
+
+
+    auto sec_cmp = [](std::pair<int, double> a, std::pair<int, double> b) { return a.second < b.second; };
+
+    std::set<std::pair<int, double>, decltype(sec_cmp)> free_sec(sec_cmp);
+    std::set<std::pair<int, double>, decltype(sec_cmp)> occ_sec(sec_cmp);
+
     for (int i = 0; i < int(bumper_msg->n_horizontal_sectors); i++)
     {
       if (bumper_msg->sectors.at(i) < 0)
         continue;
 
-      if (bumper_msg->sectors.at(i) <= safe_obstacle_distance_ * bumper_distance_factor_)
+      std::pair<int, double> sec = {i, bumper_msg->sectors.at(i)};
+      if (sec.second <= safe_obstacle_distance_ * bumper_distance_factor_)
       {
-        const anax_t rot(sector_size * i + M_PI + uav_pose.w(), vec3_t::UnitZ());
-        const vec3_t avoidance_vector = rot * ((safe_obstacle_distance_ - bumper_msg->sectors.at(i) + planning_tree_resolution_) * forward);
-        return avoidance_vector;
+        occ_sec.insert(sec);
+      } else
+      {
+        free_sec.insert(sec);
       }
     }
-    return vec3_t::Zero();
+
+    // no obstacle or surrounded by obstacles
+    if(occ_sec.empty() || free_sec.empty())
+      return vec3_t::Zero();
+
+    const anax_t rot(sector_size * occ_sec.begin()->first + M_PI + uav_pose.w(), vec3_t::UnitZ());
+    const vec3_t avoidance_vector = rot * ((safe_obstacle_distance_ - occ_sec.begin()->second + planning_tree_resolution_) * forward);
+    return avoidance_vector;
   }
   //}
 
