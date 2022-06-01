@@ -1466,65 +1466,34 @@ namespace navigation
     const double sector_size = (2.0 * M_PI) / double(bumper_msg->n_horizontal_sectors);
     const vec3_t forward = vec3_t::UnitX();
 
-    int n_sec = (int)bumper_msg->sectors.size() - 2;  // remove 2 (up and down rangefinders)
 
-    std::set<int> free_sec;
-    std::set<int> occ_sec;
+    auto sec_cmp = [](std::pair<int, double> a, std::pair<int, double> b) { return a.second < b.second; };
 
-    auto cmp = [](std::pair<int, int> a, std::pair<int, int> b) { return a.second > b.second; };
-    std::set<std::pair<int, int>, decltype(cmp)> opposite_sec(cmp);
+    std::set<std::pair<int, double>, decltype(sec_cmp)> free_sec(sec_cmp);
+    std::set<std::pair<int, double>, decltype(sec_cmp)> occ_sec(sec_cmp);
 
     for (int i = 0; i < int(bumper_msg->n_horizontal_sectors); i++)
     {
       if (bumper_msg->sectors.at(i) < 0)
         continue;
 
-      if (bumper_msg->sectors.at(i) <= safe_obstacle_distance_ * bumper_distance_factor_)
+      std::pair<int, double> sec = {i, bumper_msg->sectors.at(i)};
+      if (sec.second <= safe_obstacle_distance_ * bumper_distance_factor_)
       {
-        occ_sec.insert(i);
+        occ_sec.insert(sec);
       } else
       {
-        free_sec.insert(i);
+        free_sec.insert(sec);
       }
     }
 
-    for (auto& s : occ_sec)
-    {
-      std::pair<int, int> sec;
-      sec.first = ((s + (n_sec / 2)) % n_sec);
-      sec.second = 0;
-      for (auto& o : occ_sec)
-      {
-        int d = std::abs(o - sec.first) % n_sec;
-        sec.second += d;
-        opposite_sec.insert(sec);
-      }
-    }
-
-    // no obstacle
-    if (occ_sec.empty())
+    // no obstacle or surrounded by obstacles
+    if(occ_sec.empty() || free_sec.empty())
       return vec3_t::Zero();
 
-    for (auto& s : opposite_sec)
-    {
-      if (free_sec.find(s.first) != free_sec.end())
-      {
-        RCLCPP_INFO(this->get_logger(), "[Navigation]: Selected sector %d (free and opposite of obstacle), dist: %d", s.first, s.second);
-        const anax_t rot(sector_size * s.first + uav_pose.w(), vec3_t::UnitZ());
-        const vec3_t avoidance_vector = rot * ((planning_tree_resolution_)*forward);
-        return avoidance_vector;
-      }
-    }
-
-    if (!free_sec.empty())
-    {
-      RCLCPP_INFO(this->get_logger(), "[Navigation]: Selected sector %d (free)", (*free_sec.begin()));
-      const anax_t rot(sector_size * (*free_sec.begin()) + uav_pose.w(), vec3_t::UnitZ());
-      const vec3_t avoidance_vector = rot * ((planning_tree_resolution_)*forward);
-      return avoidance_vector;
-    }
-
-    return vec3_t::Zero();
+    const anax_t rot(sector_size * occ_sec.begin()->first + M_PI + uav_pose.w(), vec3_t::UnitZ());
+    const vec3_t avoidance_vector = rot * ((safe_obstacle_distance_ - occ_sec.begin()->second + planning_tree_resolution_) * forward);
+    return avoidance_vector;
   }
   //}
 
