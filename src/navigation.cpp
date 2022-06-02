@@ -1466,33 +1466,70 @@ namespace navigation
     const double sector_size = (2.0 * M_PI) / double(bumper_msg->n_horizontal_sectors);
     const vec3_t forward = vec3_t::UnitX();
 
+    auto dist_cmp = [](std::pair<int, double> a, std::pair<int, double> b) { return a.second < b.second; };
 
-    auto sec_cmp = [](std::pair<int, double> a, std::pair<int, double> b) { return a.second < b.second; };
-
-    std::set<std::pair<int, double>, decltype(sec_cmp)> free_sec(sec_cmp);
-    std::set<std::pair<int, double>, decltype(sec_cmp)> occ_sec(sec_cmp);
+    std::set<int> free_sec;
+    std::set<std::pair<int, double>, decltype(dist_cmp)> occ_sec(dist_cmp);  // occupied sector idx, dist to obstacle
 
     for (int i = 0; i < int(bumper_msg->n_horizontal_sectors); i++)
     {
       if (bumper_msg->sectors.at(i) < 0)
         continue;
 
-      std::pair<int, double> sec = {i, bumper_msg->sectors.at(i)};
-      if (sec.second <= safe_obstacle_distance_ * bumper_distance_factor_)
+      if (bumper_msg_->sectors.at(i) <= safe_obstacle_distance_ * bumper_distance_factor_)
       {
+        auto sec = std::pair<int, double>(i, bumper_msg_->sectors.at(i));
         occ_sec.insert(sec);
       } else
       {
-        free_sec.insert(sec);
+        free_sec.insert(i);
       }
     }
 
     // no obstacle or surrounded by obstacles
-    if(occ_sec.empty() || free_sec.empty())
+    if (occ_sec.empty() || free_sec.empty())
       return vec3_t::Zero();
 
-    const anax_t rot(sector_size * occ_sec.begin()->first + M_PI + uav_pose.w(), vec3_t::UnitZ());
-    const vec3_t avoidance_vector = rot * ((safe_obstacle_distance_ - occ_sec.begin()->second + planning_tree_resolution_) * forward);
+    auto count_cmp = [](std::pair<int, int> a, std::pair<int, int> b) { return a.second > b.second; };
+    std::set<std::pair<int, int>, decltype(count_cmp)> avoidance_sec(count_cmp);  // free sector idx, num of sectors to nearest ocupied
+
+    for (const auto& f : free_sec)
+    {
+      int sectors_to_nearest_occ = bumper_msg_->n_horizontal_sectors;
+      for (auto& o : occ_sec)
+      {
+        int a = f;
+        int b = o.first;
+
+        if (b > a)
+        {
+          int tmp = a;
+          a = b;
+          b = tmp;
+        }
+
+        int dist = a - b;
+        if (dist > (bumper_msg_->n_horizontal_sectors / 2.0))
+        {
+          dist = b + bumper_msg_->n_horizontal_sectors - a;
+        }
+        RCLCPP_INFO(this->get_logger(), "[Navigation]: FREE: %d to OCCUPIED: %d -- DIST: %d", f, o.first, dist);
+
+        if (dist < sectors_to_nearest_occ)
+        {
+          sectors_to_nearest_occ = dist;
+        }
+      }
+      auto sec = std::pair<int, int>(f, sectors_to_nearest_occ);
+      avoidance_sec.insert(sec);
+      RCLCPP_INFO(this->get_logger(), "[Navigation]: For sector: %d nearest obstacle is %d sectors away", sec.first, sec.second);
+    }
+
+    RCLCPP_INFO(this->get_logger(), "[Navigation]: Closest obstacle is in sector: %d", occ_sec.begin()->first);
+    RCLCPP_INFO(this->get_logger(), "[Navigation]: SELECTED AVOIDANCE SECTOR: %d, DIST: %d ", avoidance_sec.begin()->first, avoidance_sec.begin()->second);
+
+    const anax_t rot(sector_size * avoidance_sec.begin()->first + uav_pose.w(), vec3_t::UnitZ());
+    const vec3_t avoidance_vector = rot * (2 * planning_tree_resolution_ * forward);
     return avoidance_vector;
   }
   //}
