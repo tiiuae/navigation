@@ -1473,18 +1473,17 @@ namespace navigation
 
     for (int i = 0; i < int(bumper_msg->n_horizontal_sectors); i++)
     {
-      if (bumper_msg->sectors.at(i) < 0)
-        continue;
-
-      if (bumper_msg_->sectors.at(i) <= safe_obstacle_distance_ * bumper_distance_factor_)
+      if (bumper_msg->sectors.at(i) < 0 || bumper_msg_->sectors.at(i) > safe_obstacle_distance_ * bumper_distance_factor_)
+      {
+        free_sec.insert(i);
+      } else
       {
         auto sec = std::pair<int, double>(i, bumper_msg_->sectors.at(i));
         occ_sec.insert(sec);
-      } else
-      {
-        free_sec.insert(i);
       }
     }
+
+    RCLCPP_INFO(this->get_logger(), "[Navigation]: Occupied: %ld, Free: %ld", occ_sec.size(), free_sec.size());
 
     // no obstacle or surrounded by obstacles
     if (occ_sec.empty() || free_sec.empty())
