@@ -1,3 +1,6 @@
+# Deprecated
+## This package is no longer maintained or supported.
+
 # navigation
 
 Path planning for collision-free navigation
